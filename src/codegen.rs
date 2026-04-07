@@ -52,7 +52,7 @@ impl<W: Write> Codegen<W> {
     }
 
     pub fn generate(&mut self) -> io::Result<()> {
-        let var_frame_size = (self.count_locals() * 8 + 15) / 16 * 16;
+        let var_frame_size = (self.count_locals() * 8).div_ceil(16) * 16;
 
         writeln!(self.writer, ".text")?;
         writeln!(self.writer, ".globl main")?;
@@ -91,7 +91,7 @@ impl<W: Write> Codegen<W> {
                 self.push("t0")?;
             }
             Tree::Var(name) => {
-                if let Some(offset) = self.lookup(&name) {
+                if let Some(offset) = self.lookup(name) {
                     writeln!(self.writer, "    ld t0, {}(fp)", offset)?;
                     self.push("t0")?;
                 } else {
@@ -103,7 +103,7 @@ impl<W: Write> Codegen<W> {
                     self.gen_expr(rhs)?;
                     self.pop("t0")?;
 
-                    let offset = if let Some(offset) = self.lookup(&name) {
+                    let offset = if let Some(offset) = self.lookup(name) {
                         offset
                     } else {
                         self.declare(name.to_string())

@@ -6,7 +6,6 @@ use std::io::stdout;
 
 use crate::codegen::Codegen;
 use crate::parser::parse;
-use pest::Parser;
 
 fn main() {
     let args: Vec<_> = env::args().collect();
