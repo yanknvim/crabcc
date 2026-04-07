@@ -52,11 +52,27 @@ impl<W: Write> Codegen<W> {
     }
 
     pub fn generate(&mut self) -> io::Result<()> {
-        let var_frame_size = (self.count_locals() * 8).div_ceil(16) * 16;
 
         writeln!(self.writer, ".text")?;
         writeln!(self.writer, ".globl main")?;
         writeln!(self.writer, "main:")?;
+
+        self.prologue()?;
+
+        for tree in self.trees.clone() {
+            self.gen_expr(&tree)?;
+            self.pop("t0")?;
+        }
+
+        writeln!(self.writer, "    mv a0, t0")?;
+
+        self.epilogue()?;
+
+        Ok(())
+    }
+
+    fn prologue(&mut self) -> io::Result<()> {
+        let var_frame_size = (self.count_locals() * 8).div_ceil(16) * 16;
 
         // Prologue
         writeln!(self.writer, "    addi sp, sp, -16")?;
@@ -66,12 +82,11 @@ impl<W: Write> Codegen<W> {
 
         writeln!(self.writer, "    addi sp, sp, -{}", var_frame_size)?;
 
-        for tree in self.trees.clone() {
-            self.gen_expr(&tree)?;
-            self.pop("t0")?;
-        }
+        Ok(())
+    }
 
-        writeln!(self.writer, "    mv a0, t0")?;
+    fn epilogue(&mut self) -> io::Result<()> {
+        let var_frame_size = (self.count_locals() * 8).div_ceil(16) * 16;
 
         // Epilogue
         writeln!(self.writer, "    addi sp, sp, {}", var_frame_size)?;
@@ -97,6 +112,11 @@ impl<W: Write> Codegen<W> {
                 } else {
                     panic!("Not declared variable: {}", name);
                 }
+            }
+            Tree::Return(inner) => {
+                self.gen_expr(inner)?;
+                self.pop("a0")?;
+                self.epilogue()?;
             }
             Tree::Assign(lhs, rhs) => match **lhs {
                 Tree::Var(ref name) => {
