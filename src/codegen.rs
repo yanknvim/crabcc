@@ -1,31 +1,83 @@
 use crate::parser::{Op, Tree};
 use std::io::{self, Write};
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug)]
 pub struct Codegen<W: Write> {
     trees: Vec<Tree>,
+    env: Vec<HashMap<String, i64>>,
+    stack_offset: i64,
     writer: W,
 }
 
 impl<W: Write> Codegen<W> {
     pub fn new(tree: Vec<Tree>, writer: W) -> Self {
+        let hm = HashMap::new();
         Self {
             trees: tree,
+            env: vec![hm],
+            stack_offset: 16,
             writer,
         }
     }
 
+    fn declare(&mut self, name: String) -> i64 {
+        self.stack_offset -= 8;
+        let offset = self.stack_offset;
+        self.env.last_mut().unwrap().insert(name, offset);
+        offset
+    }
+
+    fn lookup(&self, name: &str) -> Option<i64> {
+        for scope in self.env.iter().rev() {
+            if let Some(&offset) = scope.get(name) {
+                return Some(offset);
+            }
+        }
+
+        None
+    }
+
+    fn count_locals(&self) -> usize {
+        let mut locals: HashSet<String> = HashSet::new();
+        for tree in self.trees.clone() {
+            if let Tree::Assign(lhs, _) = tree
+            && let Tree::Var(name) = *lhs {
+                locals.insert(name);
+            }
+        }
+
+        locals.len()
+    }
+
     pub fn generate(&mut self) -> io::Result<()> {
+        let var_frame_size = (self.count_locals() * 8 + 15) / 16 * 16; 
+
         writeln!(self.writer, ".text")?;
         writeln!(self.writer, ".globl main")?;
         writeln!(self.writer, "main:")?;
 
+        // Prologue
+        writeln!(self.writer, "    addi sp, sp, -16")?;
+        writeln!(self.writer, "    sd ra, 8(sp)")?;
+        writeln!(self.writer, "    sd fp, 0(sp)")?;
+        writeln!(self.writer, "    addi fp, sp, 16")?;
+
+        writeln!(self.writer, "    addi sp, sp, -{}", var_frame_size)?;
+
         for tree in self.trees.clone() {
             self.gen_expr(&tree)?;
-            self.push("t0")?;
+            self.pop("t0")?;
         }
+        
+        writeln!(self.writer, "    mv a0, t0")?;
 
-        self.pop("a0")?;
+        // Epilogue
+        writeln!(self.writer, "    addi sp, sp, {}", var_frame_size)?;
+
+        writeln!(self.writer, "    ld ra, 8(sp)")?;
+        writeln!(self.writer, "    ld fp, 0(sp)")?;
+        writeln!(self.writer, "    addi sp, sp, 16")?;
         writeln!(self.writer, "    ret")?;
 
         Ok(())
@@ -37,11 +89,38 @@ impl<W: Write> Codegen<W> {
                 writeln!(self.writer, "    li t0, {}", n)?;
                 self.push("t0")?;
             }
+            Tree::Var(name) => {
+                if let Some(offset) = self.lookup(&name) {
+                    writeln!(self.writer, "    ld t0, {}(fp)", offset)?;
+                    self.push("t0")?;
+                } else {
+                    panic!("Not declared variable: {}", name);
+                }
+            }
+            Tree::Assign(lhs, rhs) => {
+                match **lhs {
+                    Tree::Var(ref name) => {
+                        self.gen_expr(rhs)?;
+                        self.pop("t0")?;
+
+                        let offset = if let Some(offset) = self.lookup(&name) {
+                            offset
+                        } else {
+                            self.declare(name.to_string())
+                        };
+
+                        writeln!(self.writer, "    sd t0, {}(fp)", offset)?;
+                        self.push("t0")?;
+                    }
+                    _ => panic!("{:?} is not a variable", lhs),
+                }
+            }
             Tree::BinOp(op, lhs, rhs) => {
                 self.gen_expr(lhs)?;
-                writeln!(self.writer, "    mv t1, t0")?;
-
                 self.gen_expr(rhs)?;
+
+                self.pop("t1")?;
+                self.pop("t0")?;
 
                 match op {
                     Op::Add => writeln!(self.writer, "    add t0, t1, t0")?,
