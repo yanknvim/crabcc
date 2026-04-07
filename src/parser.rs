@@ -28,7 +28,7 @@ pub enum Op {
 }
 
 pub fn parse(s: &str) -> Vec<Tree> {
-    let mut pairs = CParser::parse(Rule::expr, s).expect("parse error");
+    let mut pairs = CParser::parse(Rule::program, s).expect("parse error");
 
     let pair = pairs.next().unwrap();
     parse_program(pair)
