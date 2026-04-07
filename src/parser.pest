@@ -1,0 +1,13 @@
+WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
+
+integer = @{ ASCII_DIGIT+ }
+ident = @{ (ASCII_ALPHA | "_") }
+
+add_op = { "+" | "-" }
+mul_op = { "*" | "/" }
+
+expr = { add }
+add = { mul ~ (add_op ~ mul)* }
+mul = { unary ~ (mul_op ~ unary)* }
+unary = { add_op? ~ primary }
+primary = { integer | ident | "(" ~ expr ~ ")" }
