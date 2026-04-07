@@ -3,10 +3,17 @@ WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
 integer = @{ ASCII_DIGIT+ }
 ident = @{ (ASCII_ALPHA | "_") }
 
+equality_op = { "==" | "!=" }
+relational_op = { ">" | ">=" | "<" | "<=" }
 add_op = { "+" | "-" }
 mul_op = { "*" | "/" }
 
-expr = { add }
+program = { stmt* }
+stmt = { expr ~ ";" }
+expr = { assign }
+assign = { equality ~ ("=" ~ assign)? }
+equality = { relational ~ (equality_op ~ relational)* }
+relational = { add ~ (relational_op ~ add)* }
 add = { mul ~ (add_op ~ mul)* }
 mul = { unary ~ (mul_op ~ unary)* }
 unary = { add_op? ~ primary }
