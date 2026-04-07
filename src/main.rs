@@ -1,12 +1,12 @@
-mod parser;
 mod codegen;
+mod parser;
 
 use std::env;
 use std::io::stdout;
 
-use pest::Parser;
-use crate::parser::parse;
 use crate::codegen::Codegen;
+use crate::parser::parse;
+use pest::Parser;
 
 fn main() {
     let args: Vec<_> = env::args().collect();

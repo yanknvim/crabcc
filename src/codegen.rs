@@ -1,6 +1,6 @@
 use crate::parser::{Op, Tree};
-use std::io::{self, Write};
 use std::collections::{HashMap, HashSet};
+use std::io::{self, Write};
 
 #[derive(Debug)]
 pub struct Codegen<W: Write> {
@@ -42,7 +42,8 @@ impl<W: Write> Codegen<W> {
         let mut locals: HashSet<String> = HashSet::new();
         for tree in self.trees.clone() {
             if let Tree::Assign(lhs, _) = tree
-            && let Tree::Var(name) = *lhs {
+                && let Tree::Var(name) = *lhs
+            {
                 locals.insert(name);
             }
         }
@@ -51,7 +52,7 @@ impl<W: Write> Codegen<W> {
     }
 
     pub fn generate(&mut self) -> io::Result<()> {
-        let var_frame_size = (self.count_locals() * 8 + 15) / 16 * 16; 
+        let var_frame_size = (self.count_locals() * 8 + 15) / 16 * 16;
 
         writeln!(self.writer, ".text")?;
         writeln!(self.writer, ".globl main")?;
@@ -69,7 +70,7 @@ impl<W: Write> Codegen<W> {
             self.gen_expr(&tree)?;
             self.pop("t0")?;
         }
-        
+
         writeln!(self.writer, "    mv a0, t0")?;
 
         // Epilogue
@@ -97,24 +98,22 @@ impl<W: Write> Codegen<W> {
                     panic!("Not declared variable: {}", name);
                 }
             }
-            Tree::Assign(lhs, rhs) => {
-                match **lhs {
-                    Tree::Var(ref name) => {
-                        self.gen_expr(rhs)?;
-                        self.pop("t0")?;
+            Tree::Assign(lhs, rhs) => match **lhs {
+                Tree::Var(ref name) => {
+                    self.gen_expr(rhs)?;
+                    self.pop("t0")?;
 
-                        let offset = if let Some(offset) = self.lookup(&name) {
-                            offset
-                        } else {
-                            self.declare(name.to_string())
-                        };
+                    let offset = if let Some(offset) = self.lookup(&name) {
+                        offset
+                    } else {
+                        self.declare(name.to_string())
+                    };
 
-                        writeln!(self.writer, "    sd t0, {}(fp)", offset)?;
-                        self.push("t0")?;
-                    }
-                    _ => panic!("{:?} is not a variable", lhs),
+                    writeln!(self.writer, "    sd t0, {}(fp)", offset)?;
+                    self.push("t0")?;
                 }
-            }
+                _ => panic!("{:?} is not a variable", lhs),
+            },
             Tree::BinOp(op, lhs, rhs) => {
                 self.gen_expr(lhs)?;
                 self.gen_expr(rhs)?;
