@@ -1,7 +1,7 @@
 WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
 
 integer = @{ ASCII_DIGIT+ }
-ident = @{ (ASCII_ALPHA | "_") }
+ident = @{ (ASCII_ALPHA | "_") ~ ( ASCII_ALPHANUMERIC | "_" )* }
 
 equality_op = { "==" | "!=" }
 relational_op = { ">" | ">=" | "<" | "<=" }
@@ -9,7 +9,11 @@ add_op = { "+" | "-" }
 mul_op = { "*" | "/" }
 
 program = { stmt* }
-stmt = { expr ~ ";" }
+
+stmt = { return_stmt | expr_stmt }
+return_stmt = { "return" ~ expr ~ ";" }
+expr_stmt = { expr ~ ";" }
+
 expr = { assign }
 assign = { equality ~ ("=" ~ assign)? }
 equality = { relational ~ (equality_op ~ relational)* }
