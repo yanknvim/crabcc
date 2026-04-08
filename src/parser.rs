@@ -22,6 +22,28 @@ pub enum Tree {
     Return(Box<Tree>),
 }
 
+impl Tree {
+    pub fn children(&self) -> Box<dyn Iterator<Item = &Tree> + '_> {
+        match self {
+            Tree::Assign(_, rhs) | Tree::Return(rhs) => Box::new(std::iter::once(rhs.as_ref())),
+            Tree::BinOp(_, lhs, rhs) => Box::new(vec![lhs.as_ref(), rhs.as_ref()].into_iter()),
+            Tree::If(cond, a, Some(b)) => {
+                Box::new(vec![cond.as_ref(), a.as_ref(), b.as_ref()].into_iter())
+            }
+            Tree::If(cond, a, None) => Box::new(vec![cond.as_ref(), a.as_ref()].into_iter()),
+            Tree::While(cond, stmt) => Box::new(vec![cond.as_ref(), stmt.as_ref()].into_iter()),
+            Tree::For(init, cond, update, stmt) => Box::new(
+                init.as_deref()
+                    .into_iter()
+                    .chain(cond.as_deref())
+                    .chain(update.as_deref())
+                    .chain(std::iter::once(stmt.as_ref())),
+            ),
+            _ => Box::new(std::iter::empty()),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Op {
     Add,
