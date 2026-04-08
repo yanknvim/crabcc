@@ -9,6 +9,14 @@ pub struct CParser;
 pub enum Tree {
     BinOp(Op, Box<Tree>, Box<Tree>),
     Assign(Box<Tree>, Box<Tree>),
+    If(Box<Tree>, Box<Tree>, Option<Box<Tree>>),
+    While(Box<Tree>, Box<Tree>),
+    For(
+        Option<Box<Tree>>,
+        Option<Box<Tree>>,
+        Option<Box<Tree>>,
+        Box<Tree>,
+    ),
     Integer(i64),
     Var(String),
     Return(Box<Tree>),
@@ -43,13 +51,55 @@ fn parse_program(pair: Pair<Rule>) -> Vec<Tree> {
 fn parse_stmt(pair: Pair<Rule>) -> Tree {
     match pair.as_rule() {
         Rule::stmt => parse_stmt(pair.into_inner().next().unwrap()),
+        Rule::if_stmt => {
+            let mut inner = pair.into_inner();
+            let cond = parse_expr(inner.next().unwrap());
+
+            let stmt_a = parse_stmt(inner.next().unwrap());
+            let stmt_b = inner.next().map(parse_stmt);
+
+            Tree::If(Box::new(cond), Box::new(stmt_a), stmt_b.map(Box::new))
+        }
+        Rule::while_stmt => {
+            let mut inner = pair.into_inner();
+            let cond = parse_expr(inner.next().unwrap());
+            let stmt = parse_stmt(inner.next().unwrap());
+
+            Tree::While(Box::new(cond), Box::new(stmt))
+        }
+        Rule::for_stmt => {
+            let mut init = None;
+            let mut cond = None;
+            let mut update = None;
+            let mut stmt = None;
+
+            for inner in pair.into_inner() {
+                match inner.as_rule() {
+                    Rule::init => {
+                        init = Some(Box::new(parse_expr(inner.into_inner().next().unwrap())))
+                    }
+                    Rule::cond => {
+                        cond = Some(Box::new(parse_expr(inner.into_inner().next().unwrap())))
+                    }
+                    Rule::update => {
+                        update = Some(Box::new(parse_expr(inner.into_inner().next().unwrap())))
+                    }
+                    Rule::stmt => {
+                        stmt = Some(Box::new(parse_stmt(inner.into_inner().next().unwrap())))
+                    }
+                    _ => unreachable!(),
+                }
+            }
+
+            Tree::For(init, cond, update, stmt.unwrap())
+        }
         Rule::return_stmt => {
             let mut inner = pair.into_inner();
-            Tree::Return(Box::new(parse_assign(inner.next().unwrap())))
+            Tree::Return(Box::new(parse_expr(inner.next().unwrap())))
         }
         Rule::expr_stmt => {
             let mut inner = pair.into_inner();
-            parse_assign(inner.next().unwrap())
+            parse_expr(inner.next().unwrap())
         }
         _ => panic!("unexpected syntax: {:?}", pair),
     }

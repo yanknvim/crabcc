@@ -4,14 +4,25 @@ integer = @{ ASCII_DIGIT+ }
 ident = @{ (ASCII_ALPHA | "_") ~ ( ASCII_ALPHANUMERIC | "_" )* }
 
 equality_op = { "==" | "!=" }
-relational_op = { ">" | ">=" | "<" | "<=" }
+relational_op = { ">=" | ">" | "<=" | "<" }
 add_op = { "+" | "-" }
 mul_op = { "*" | "/" }
 
 program = { stmt* }
 
-stmt = { return_stmt | expr_stmt }
+stmt = { if_stmt | while_stmt | for_stmt | return_stmt | expr_stmt }
+
+if_stmt = { "if" ~ "(" ~ expr ~ ")" ~ stmt ~ ( "else" ~ stmt )? }
+
+while_stmt = { "while" ~ "(" ~ expr ~ ")" ~ stmt }
+
+for_stmt = { "for" ~ "(" ~ init? ~ ";" ~ cond? ~ ";" ~ update? ~ ")" ~ stmt }
+init = { expr }
+cond = { expr }
+update = { expr }
+
 return_stmt = { "return" ~ expr ~ ";" }
+
 expr_stmt = { expr ~ ";" }
 
 expr = { assign }

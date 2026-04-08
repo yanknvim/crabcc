@@ -7,6 +7,7 @@ pub struct Codegen<W: Write> {
     trees: Vec<Tree>,
     env: Vec<HashMap<String, i64>>,
     stack_offset: i64,
+    label: usize,
     writer: W,
 }
 
@@ -16,7 +17,8 @@ impl<W: Write> Codegen<W> {
         Self {
             trees: tree,
             env: vec![hm],
-            stack_offset: 16,
+            stack_offset: 0,
+            label: 0,
             writer,
         }
     }
@@ -38,21 +40,46 @@ impl<W: Write> Codegen<W> {
         None
     }
 
+    fn collect_locals(tree: &Tree, locals: &mut HashSet<String>) {
+        if let Tree::Assign(lhs, _) = tree {
+            if let Tree::Var(name) = &**lhs {
+                locals.insert(name.clone());
+            }
+        }
+
+        for child in Self::children(tree) {
+            Self::collect_locals(child, locals);
+        }
+    }
+
+    fn children(tree: &Tree) -> Vec<&Tree> {
+        match tree {
+            Tree::Assign(_, rhs) | Tree::Return(rhs) => vec![rhs],
+            Tree::BinOp(_, lhs, rhs) => vec![lhs, rhs],
+            Tree::If(cond, a, Some(b)) => vec![cond, a, b],
+            Tree::If(cond, a, None) => vec![cond, a],
+            Tree::While(cond, stmt) => vec![cond, stmt],
+            Tree::For(init, cond, update, stmt) => init
+                .as_deref()
+                .into_iter()
+                .chain(cond.as_deref())
+                .chain(update.as_deref())
+                .chain(std::iter::once(stmt.as_ref()))
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
     fn count_locals(&self) -> usize {
         let mut locals: HashSet<String> = HashSet::new();
-        for tree in self.trees.clone() {
-            if let Tree::Assign(lhs, _) = tree
-                && let Tree::Var(name) = *lhs
-            {
-                locals.insert(name);
-            }
+        for tree in &self.trees {
+            Self::collect_locals(tree, &mut locals);
         }
 
         locals.len()
     }
 
     pub fn generate(&mut self) -> io::Result<()> {
-
         writeln!(self.writer, ".text")?;
         writeln!(self.writer, ".globl main")?;
         writeln!(self.writer, "main:")?;
@@ -60,7 +87,7 @@ impl<W: Write> Codegen<W> {
         self.prologue()?;
 
         for tree in self.trees.clone() {
-            self.gen_expr(&tree)?;
+            self.gen_tree(&tree)?;
             self.pop("t0")?;
         }
 
@@ -78,7 +105,7 @@ impl<W: Write> Codegen<W> {
         writeln!(self.writer, "    addi sp, sp, -16")?;
         writeln!(self.writer, "    sd ra, 8(sp)")?;
         writeln!(self.writer, "    sd fp, 0(sp)")?;
-        writeln!(self.writer, "    addi fp, sp, 16")?;
+        writeln!(self.writer, "    addi fp, sp, 0")?;
 
         writeln!(self.writer, "    addi sp, sp, -{}", var_frame_size)?;
 
@@ -99,7 +126,7 @@ impl<W: Write> Codegen<W> {
         Ok(())
     }
 
-    fn gen_expr(&mut self, tree: &Tree) -> io::Result<()> {
+    fn gen_tree(&mut self, tree: &Tree) -> io::Result<()> {
         match tree {
             Tree::Integer(n) => {
                 writeln!(self.writer, "    li t0, {}", n)?;
@@ -114,13 +141,13 @@ impl<W: Write> Codegen<W> {
                 }
             }
             Tree::Return(inner) => {
-                self.gen_expr(inner)?;
+                self.gen_tree(inner)?;
                 self.pop("a0")?;
                 self.epilogue()?;
             }
             Tree::Assign(lhs, rhs) => match **lhs {
                 Tree::Var(ref name) => {
-                    self.gen_expr(rhs)?;
+                    self.gen_tree(rhs)?;
                     self.pop("t0")?;
 
                     let offset = if let Some(offset) = self.lookup(name) {
@@ -135,8 +162,8 @@ impl<W: Write> Codegen<W> {
                 _ => panic!("{:?} is not a variable", lhs),
             },
             Tree::BinOp(op, lhs, rhs) => {
-                self.gen_expr(lhs)?;
-                self.gen_expr(rhs)?;
+                self.gen_tree(lhs)?;
+                self.gen_tree(rhs)?;
 
                 self.pop("t1")?;
                 self.pop("t0")?;
@@ -154,21 +181,93 @@ impl<W: Write> Codegen<W> {
                         writeln!(self.writer, "    sub t0, t1, t0")?;
                         writeln!(self.writer, "    snez t0, t0")?
                     }
-                    Op::GreaterThan => writeln!(self.writer, "    slt t0, t0, t1")?,
+                    Op::GreaterThan => writeln!(self.writer, "    slt t0, t1, t0")?,
                     Op::GreaterThanOrEq => {
-                        writeln!(self.writer, "    slt t0, t1, t0")?;
+                        writeln!(self.writer, "    slt t0, t0, t1")?;
                         writeln!(self.writer, "    xori t0, t0, 1")?
                     }
-                    Op::LessThan => writeln!(self.writer, "    slt t0, t1, t0")?,
+                    Op::LessThan => writeln!(self.writer, "    slt t0, t0, t1")?,
                     Op::LessThanOrEq => {
-                        writeln!(self.writer, "    slt t0, t0, t1")?;
+                        writeln!(self.writer, "    slt t0, t1, t0")?;
                         writeln!(self.writer, "    xori t0, t0, 1")?
                     }
                 }
 
                 self.push("t0")?;
             }
-            _ => unimplemented!(),
+            Tree::If(cond, a, b) => {
+                self.gen_tree(cond)?;
+                self.pop("t0")?;
+
+                writeln!(self.writer, "    beq t0, x0, Else{}", self.label)?;
+                self.gen_tree(a)?;
+                self.pop("t0")?;
+
+                if let Some(b) = b {
+                    writeln!(self.writer, "    jal x0, End{}", self.label)?;
+                    writeln!(self.writer, "Else{}:", self.label)?;
+                    self.gen_tree(b)?;
+                    self.pop("t0")?;
+                    writeln!(self.writer, "End{}:", self.label)?;
+                    self.push("t0")?;
+                } else {
+                    writeln!(self.writer, "Else{}:", self.label)?;
+                    writeln!(self.writer, "    li t0, 0")?;
+                    self.push("t0")?;
+                }
+
+                self.label += 1;
+            }
+            Tree::While(cond, stmt) => {
+                writeln!(self.writer, "Begin{}:", self.label)?;
+
+                self.gen_tree(cond)?;
+                self.pop("t0")?;
+
+                writeln!(self.writer, "    beq t0, x0, End{}", self.label)?;
+                self.gen_tree(stmt)?;
+                self.pop("t0")?;
+
+                writeln!(self.writer, "    jal x0, Begin{}", self.label)?;
+
+                writeln!(self.writer, "End{}:", self.label)?;
+
+                self.label += 1;
+
+                writeln!(self.writer, "    li t0, 0")?;
+                self.push("t0")?;
+            }
+            Tree::For(init, cond, update, stmt) => {
+                if let Some(init) = init {
+                    self.gen_tree(init)?;
+                    self.pop("t0")?;
+                }
+
+                writeln!(self.writer, "Begin{}:", self.label)?;
+
+                if let Some(cond) = cond {
+                    self.gen_tree(cond)?;
+                    self.pop("t0")?;
+                    writeln!(self.writer, "    beq t0, x0, End{}", self.label)?;
+                }
+
+                self.gen_tree(stmt)?;
+                self.pop("t0")?;
+
+                if let Some(update) = update {
+                    self.gen_tree(update)?;
+                    self.pop("t0")?;
+                }
+
+                writeln!(self.writer, "    jal x0, Begin{}", self.label)?;
+
+                writeln!(self.writer, "End{}:", self.label)?;
+
+                self.label += 1;
+
+                writeln!(self.writer, "    li t0, 0")?;
+                self.push("t0")?;
+            }
         }
 
         Ok(())
