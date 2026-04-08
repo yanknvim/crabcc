@@ -26,7 +26,7 @@ cond = { expr }
 update = { expr }
 
 func_def = { "int" ~ ident ~ "(" ~ params? ~ ")" ~ block }
-params = { ident ~ ("," ~ ident)* }
+params = { "int" ~ ident ~ ("," ~ "int" ~ ident)* }
 
 return_stmt = { "return" ~ expr ~ ";" }
 

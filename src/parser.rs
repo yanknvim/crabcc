@@ -1,4 +1,4 @@
-use pest::{iterators::Pair, Parser};
+use pest::{Parser, iterators::Pair};
 use pest_derive::Parser;
 
 #[derive(Parser)]
@@ -562,7 +562,7 @@ mod tests {
 
     #[test]
     fn parse_function_definition() {
-        let tree = parse_one("int add(a,b){int a1; int b1; return a+b;}");
+        let tree = parse_one("int add(int a,int b){int a1; int b1; return a+b;}");
         let expected = Tree::FuncDef(
             "add".to_string(),
             vec!["a".to_string(), "b".to_string()],

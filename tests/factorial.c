@@ -1,4 +1,4 @@
-int factorial(n) {
+int factorial(int n) {
     int next;
     if (n <= 1)
         return 1;
