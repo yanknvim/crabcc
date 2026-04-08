@@ -42,7 +42,8 @@ impl<W: Write> Codegen<W> {
 
     fn collect_locals(tree: &Tree, locals: &mut HashSet<String>) {
         if let Tree::Assign(lhs, _) = tree
-        && let Tree::Var(name) = &**lhs {
+            && let Tree::Var(name) = &**lhs
+        {
             locals.insert(name.clone());
         }
 
@@ -180,7 +181,7 @@ impl<W: Write> Codegen<W> {
                 self.env.push(HashMap::new());
 
                 for tree in trees {
-                    self.gen_stmt(&tree)?;
+                    self.gen_stmt(tree)?;
                 }
 
                 self.env.pop();

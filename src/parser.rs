@@ -1,4 +1,4 @@
-use pest::{iterators::Pair, Parser};
+use pest::{Parser, iterators::Pair};
 use pest_derive::Parser;
 
 #[derive(Parser)]
@@ -28,7 +28,7 @@ impl Tree {
         match self {
             Tree::Assign(_, rhs) | Tree::Return(rhs) => Box::new(std::iter::once(rhs.as_ref())),
             Tree::BinOp(_, lhs, rhs) => Box::new(vec![lhs.as_ref(), rhs.as_ref()].into_iter()),
-            Tree::Block(stmts) => Box::new(stmts.into_iter()),
+            Tree::Block(stmts) => Box::new(stmts.iter()),
             Tree::If(cond, a, Some(b)) => {
                 Box::new(vec![cond.as_ref(), a.as_ref(), b.as_ref()].into_iter())
             }
