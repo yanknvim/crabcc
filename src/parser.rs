@@ -10,6 +10,7 @@ pub enum Tree {
     BinOp(Op, Box<Tree>, Box<Tree>),
     Assign(Box<Tree>, Box<Tree>),
     Block(Vec<Tree>),
+    FuncDef(String, Vec<String>, Box<Tree>),
     If(Box<Tree>, Box<Tree>, Option<Box<Tree>>),
     While(Box<Tree>, Box<Tree>),
     For(
@@ -20,6 +21,7 @@ pub enum Tree {
     ),
     Integer(i64),
     Var(String),
+    Call(String, Vec<Tree>),
     Return(Box<Tree>),
 }
 
@@ -41,6 +43,8 @@ impl Tree {
                     .chain(update.as_deref())
                     .chain(std::iter::once(stmt.as_ref())),
             ),
+            Tree::FuncDef(_, _, body) => Box::new(std::iter::once(body.as_ref())),
+            Tree::Call(_, args) => Box::new(args.iter()),
             _ => Box::new(std::iter::empty()),
         }
     }
@@ -69,7 +73,45 @@ pub fn parse(s: &str) -> Vec<Tree> {
 
 fn parse_program(pair: Pair<Rule>) -> Vec<Tree> {
     let inner = pair.into_inner();
-    inner.map(|p| parse_stmt(p)).collect::<Vec<_>>()
+    inner
+        .filter_map(|p| match p.as_rule() {
+            Rule::func_def => {
+                let mut inner = p.into_inner();
+                let name = inner.next().unwrap().as_str().to_string();
+                let mut params = Vec::new();
+                let mut body = None;
+
+                for item in inner {
+                    match item.as_rule() {
+                        Rule::params => {
+                            params = item
+                                .into_inner()
+                                .map(|ident| ident.as_str().to_string())
+                                .collect();
+                        }
+                        Rule::block => {
+                            body = Some(Box::new(parse_stmt(item)));
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+
+                Some(Tree::FuncDef(
+                    name,
+                    params,
+                    body.expect("missing function body"),
+                ))
+            }
+            Rule::stmt
+            | Rule::block
+            | Rule::if_stmt
+            | Rule::while_stmt
+            | Rule::for_stmt
+            | Rule::return_stmt
+            | Rule::expr_stmt => Some(parse_stmt(p)),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
 }
 
 fn parse_stmt(pair: Pair<Rule>) -> Tree {
@@ -188,6 +230,17 @@ fn parse_primary(pair: Pair<Rule>) -> Tree {
     match inner.as_rule() {
         Rule::integer => Tree::Integer(inner.as_str().parse().unwrap()),
         Rule::ident => Tree::Var(inner.as_str().to_string()),
+        Rule::call => {
+            let mut inner = inner.into_inner();
+            let name = inner.next().unwrap().as_str().to_string();
+            let mut args = Vec::new();
+
+            if let Some(args_pair) = inner.next() {
+                args = args_pair.into_inner().map(parse_expr).collect();
+            }
+
+            Tree::Call(name, args)
+        }
         Rule::expr => parse_expr(inner),
         _ => unreachable!(),
     }
@@ -475,6 +528,40 @@ mod tests {
             None,
             None,
             Box::new(Tree::Return(Box::new(Tree::Integer(0)))),
+        );
+
+        assert_tree_eq(&tree, &expected);
+    }
+
+    #[test]
+    fn parse_function_definition() {
+        let tree = parse_one("add(a,b){return a+b;}");
+        let expected = Tree::FuncDef(
+            "add".to_string(),
+            vec!["a".to_string(), "b".to_string()],
+            Box::new(Tree::Block(vec![Tree::Return(Box::new(Tree::BinOp(
+                Op::Add,
+                Box::new(Tree::Var("a".to_string())),
+                Box::new(Tree::Var("b".to_string())),
+            )))])),
+        );
+
+        assert_tree_eq(&tree, &expected);
+    }
+
+    #[test]
+    fn parse_call_expression() {
+        let tree = parse_one("add(1,2+3);");
+        let expected = Tree::Call(
+            "add".to_string(),
+            vec![
+                Tree::Integer(1),
+                Tree::BinOp(
+                    Op::Add,
+                    Box::new(Tree::Integer(2)),
+                    Box::new(Tree::Integer(3)),
+                ),
+            ],
         );
 
         assert_tree_eq(&tree, &expected);

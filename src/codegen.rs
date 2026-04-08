@@ -6,6 +6,8 @@ use std::io::{self, Write};
 pub struct Codegen<W: Write> {
     trees: Vec<Tree>,
     env: Vec<HashMap<String, i64>>,
+    functions: HashMap<String, usize>, // name, param
+    current_frame_size: usize,
     stack_offset: i64,
     label: usize,
     writer: W,
@@ -13,10 +15,11 @@ pub struct Codegen<W: Write> {
 
 impl<W: Write> Codegen<W> {
     pub fn new(tree: Vec<Tree>, writer: W) -> Self {
-        let hm = HashMap::new();
         Self {
             trees: tree,
-            env: vec![hm],
+            env: Vec::new(),
+            functions: HashMap::new(),
+            current_frame_size: 0,
             stack_offset: 0,
             label: 0,
             writer,
@@ -52,55 +55,87 @@ impl<W: Write> Codegen<W> {
         }
     }
 
-    fn count_locals(&self) -> usize {
-        let mut locals: HashSet<String> = HashSet::new();
-        for tree in &self.trees {
-            Self::collect_locals(tree, &mut locals);
-        }
-
-        locals.len()
-    }
-
     pub fn generate(&mut self) -> io::Result<()> {
         writeln!(self.writer, ".text")?;
         writeln!(self.writer, ".globl main")?;
-        writeln!(self.writer, "main:")?;
 
-        self.prologue()?;
-
-        for tree in self.trees.clone() {
-            self.gen_stmt(&tree)?;
+        self.functions.clear();
+        let mut has_main = false;
+        for tree in &self.trees {
+            if let Tree::FuncDef(name, params, _) = tree {
+                if params.len() > 8 {
+                    panic!("Too much params: {}", name);
+                }
+                if self.functions.contains_key(name) {
+                    panic!("Double Declation of function: {}", name);
+                }
+                if name == "main" {
+                    has_main = true;
+                }
+                self.functions.insert(name.to_string(), params.len());
+            }
+        }
+        if !has_main {
+            panic!("main function is missing");
         }
 
-        self.epilogue()?;
+        for tree in self.trees.clone() {
+            self.gen_func(&tree)?;
+        }
 
         Ok(())
     }
 
-    fn prologue(&mut self) -> io::Result<()> {
-        let var_frame_size = (self.count_locals() * 8).div_ceil(16) * 16;
-
-        // Prologue
+    fn prologue(&mut self, frame_size: usize) -> io::Result<()> {
         writeln!(self.writer, "    addi sp, sp, -16")?;
         writeln!(self.writer, "    sd ra, 8(sp)")?;
         writeln!(self.writer, "    sd fp, 0(sp)")?;
         writeln!(self.writer, "    addi fp, sp, 0")?;
 
-        writeln!(self.writer, "    addi sp, sp, -{}", var_frame_size)?;
+        writeln!(self.writer, "    addi sp, sp, -{}", frame_size)?;
 
         Ok(())
     }
 
-    fn epilogue(&mut self) -> io::Result<()> {
-        let var_frame_size = (self.count_locals() * 8).div_ceil(16) * 16;
-
-        // Epilogue
-        writeln!(self.writer, "    addi sp, sp, {}", var_frame_size)?;
+    fn epilogue(&mut self, frame_size: usize) -> io::Result<()> {
+        writeln!(self.writer, "    addi sp, sp, {}", frame_size)?;
 
         writeln!(self.writer, "    ld ra, 8(sp)")?;
         writeln!(self.writer, "    ld fp, 0(sp)")?;
         writeln!(self.writer, "    addi sp, sp, 16")?;
         writeln!(self.writer, "    ret")?;
+
+        Ok(())
+    }
+
+    fn gen_func(&mut self, tree: &Tree) -> io::Result<()> {
+        match tree {
+            Tree::FuncDef(name, params, body) => {
+                self.env = vec![HashMap::new()];
+                self.stack_offset = 0;
+
+                writeln!(self.writer, "{}:", name)?;
+
+                let mut locals: HashSet<String> = HashSet::new();
+                Self::collect_locals(body, &mut locals);
+
+                let frame_size = ((locals.len() + params.len()) * 8).div_ceil(16) * 16;
+                self.current_frame_size = frame_size;
+
+                self.prologue(frame_size)?;
+
+                for (index, param) in params.iter().enumerate() {
+                    let offset = self.declare(param.to_string());
+                    writeln!(self.writer, "    sd a{}, {}(fp)", index, offset)?;
+                }
+
+                self.gen_stmt(body)?;
+
+                self.epilogue(frame_size)?;
+                self.current_frame_size = 0;
+            }
+            _ => unreachable!(),
+        }
 
         Ok(())
     }
@@ -117,6 +152,28 @@ impl<W: Write> Codegen<W> {
                     self.push("t0")?;
                 } else {
                     panic!("Not declared variable: {}", name);
+                }
+            }
+            Tree::Call(name, args) => {
+                if args.len() > 8 {
+                    panic!("Too much args: {}", name);
+                }
+
+                match self.functions.get(name) {
+                    Some(params) if *params == args.len() => {
+                        for arg in args {
+                            self.gen_expr(arg)?;
+                        }
+
+                        for (i, _) in args.iter().enumerate().rev() {
+                            self.pop(&format!("a{}", i))?;
+                        }
+
+                        writeln!(self.writer, "    call {}", name)?;
+                        self.push("a0")?;
+                    }
+                    Some(_) => panic!("Invalid number of args"),
+                    None => panic!("{} is not declared", name),
                 }
             }
             Tree::Assign(lhs, rhs) => match **lhs {
@@ -144,9 +201,9 @@ impl<W: Write> Codegen<W> {
 
                 match op {
                     Op::Add => writeln!(self.writer, "    add t0, t1, t0")?,
-                    Op::Sub => writeln!(self.writer, "    sub t0, t1, t0")?,
+                    Op::Sub => writeln!(self.writer, "    sub t0, t0, t1")?,
                     Op::Mul => writeln!(self.writer, "    mul t0, t1, t0")?,
-                    Op::Div => writeln!(self.writer, "    div t0, t1, t0")?,
+                    Op::Div => writeln!(self.writer, "    div t0, t0, t1")?,
                     Op::Eq => {
                         writeln!(self.writer, "    sub t0, t1, t0")?;
                         writeln!(self.writer, "    seqz t0, t0")?
@@ -249,7 +306,7 @@ impl<W: Write> Codegen<W> {
             Tree::Return(expr) => {
                 self.gen_expr(expr)?;
                 self.pop("a0")?;
-                self.epilogue()?;
+                self.epilogue(self.current_frame_size)?;
             }
             _ => {
                 self.gen_expr(tree)?;

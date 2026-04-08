@@ -8,7 +8,7 @@ relational_op = { ">=" | ">" | "<=" | "<" }
 add_op = { "+" | "-" }
 mul_op = { "*" | "/" }
 
-program = { stmt* }
+program = { SOI ~ (stmt | func_def)* ~ EOI }
 
 stmt = { if_stmt | while_stmt | for_stmt | return_stmt | expr_stmt | block }
 
@@ -23,6 +23,9 @@ init = { expr }
 cond = { expr }
 update = { expr }
 
+func_def = { "int" ~ ident ~ "(" ~ params? ~ ")" ~ block }
+params = { ident ~ ("," ~ ident)* }
+
 return_stmt = { "return" ~ expr ~ ";" }
 
 expr_stmt = { expr ~ ";" }
@@ -34,4 +37,7 @@ relational = { add ~ (relational_op ~ add)* }
 add = { mul ~ (add_op ~ mul)* }
 mul = { unary ~ (mul_op ~ unary)* }
 unary = { add_op? ~ primary }
-primary = { integer | ident | "(" ~ expr ~ ")" }
+primary = { call | integer | ident | "(" ~ expr ~ ")" }
+
+call = { ident ~ "(" ~ args? ~ ")" }
+args = { expr~ ("," ~ expr)* }
