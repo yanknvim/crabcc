@@ -1,4 +1,4 @@
-use pest::{Parser, iterators::Pair};
+use pest::{iterators::Pair, Parser};
 use pest_derive::Parser;
 
 #[derive(Parser)]
@@ -9,6 +9,7 @@ pub struct CParser;
 pub enum Tree {
     BinOp(Op, Box<Tree>, Box<Tree>),
     Assign(Box<Tree>, Box<Tree>),
+    Block(Vec<Tree>),
     If(Box<Tree>, Box<Tree>, Option<Box<Tree>>),
     While(Box<Tree>, Box<Tree>),
     For(
@@ -27,6 +28,7 @@ impl Tree {
         match self {
             Tree::Assign(_, rhs) | Tree::Return(rhs) => Box::new(std::iter::once(rhs.as_ref())),
             Tree::BinOp(_, lhs, rhs) => Box::new(vec![lhs.as_ref(), rhs.as_ref()].into_iter()),
+            Tree::Block(stmts) => Box::new(stmts.into_iter()),
             Tree::If(cond, a, Some(b)) => {
                 Box::new(vec![cond.as_ref(), a.as_ref(), b.as_ref()].into_iter())
             }
@@ -73,6 +75,10 @@ fn parse_program(pair: Pair<Rule>) -> Vec<Tree> {
 fn parse_stmt(pair: Pair<Rule>) -> Tree {
     match pair.as_rule() {
         Rule::stmt => parse_stmt(pair.into_inner().next().unwrap()),
+        Rule::block => {
+            let inner = pair.into_inner();
+            Tree::Block(inner.map(parse_stmt).collect())
+        }
         Rule::if_stmt => {
             let mut inner = pair.into_inner();
             let cond = parse_expr(inner.next().unwrap());
@@ -354,6 +360,122 @@ mod tests {
             Box::new(Tree::Var("a".to_string())),
             Box::new(Tree::Integer(1)),
         )));
+
+        assert_tree_eq(&tree, &expected);
+    }
+
+    #[test]
+    fn parse_if_with_stmt_body() {
+        let tree = parse_one("if(1==1) return 2; else return 3;");
+        let expected = Tree::If(
+            Box::new(Tree::BinOp(
+                Op::Eq,
+                Box::new(Tree::Integer(1)),
+                Box::new(Tree::Integer(1)),
+            )),
+            Box::new(Tree::Return(Box::new(Tree::Integer(2)))),
+            Some(Box::new(Tree::Return(Box::new(Tree::Integer(3))))),
+        );
+
+        assert_tree_eq(&tree, &expected);
+    }
+
+    #[test]
+    fn parse_while_with_stmt_body() {
+        let tree = parse_one("while(a<3) a=a+1;");
+        let expected = Tree::While(
+            Box::new(Tree::BinOp(
+                Op::LessThan,
+                Box::new(Tree::Var("a".to_string())),
+                Box::new(Tree::Integer(3)),
+            )),
+            Box::new(Tree::Assign(
+                Box::new(Tree::Var("a".to_string())),
+                Box::new(Tree::BinOp(
+                    Op::Add,
+                    Box::new(Tree::Var("a".to_string())),
+                    Box::new(Tree::Integer(1)),
+                )),
+            )),
+        );
+
+        assert_tree_eq(&tree, &expected);
+    }
+
+    #[test]
+    fn parse_for_with_stmt_body() {
+        let tree = parse_one("for(a=0; a<3; a=a+1) return a;");
+        let expected = Tree::For(
+            Some(Box::new(Tree::Assign(
+                Box::new(Tree::Var("a".to_string())),
+                Box::new(Tree::Integer(0)),
+            ))),
+            Some(Box::new(Tree::BinOp(
+                Op::LessThan,
+                Box::new(Tree::Var("a".to_string())),
+                Box::new(Tree::Integer(3)),
+            ))),
+            Some(Box::new(Tree::Assign(
+                Box::new(Tree::Var("a".to_string())),
+                Box::new(Tree::BinOp(
+                    Op::Add,
+                    Box::new(Tree::Var("a".to_string())),
+                    Box::new(Tree::Integer(1)),
+                )),
+            ))),
+            Box::new(Tree::Return(Box::new(Tree::Var("a".to_string())))),
+        );
+
+        assert_tree_eq(&tree, &expected);
+    }
+
+    #[test]
+    fn parse_if_without_else() {
+        let tree = parse_one("if(a!=0) return a;");
+        let expected = Tree::If(
+            Box::new(Tree::BinOp(
+                Op::NotEq,
+                Box::new(Tree::Var("a".to_string())),
+                Box::new(Tree::Integer(0)),
+            )),
+            Box::new(Tree::Return(Box::new(Tree::Var("a".to_string())))),
+            None,
+        );
+
+        assert_tree_eq(&tree, &expected);
+    }
+
+    #[test]
+    fn parse_while_with_block_body() {
+        let tree = parse_one("while(a<1){a=a+1;}");
+        let expected = Tree::While(
+            Box::new(Tree::BinOp(
+                Op::LessThan,
+                Box::new(Tree::Var("a".to_string())),
+                Box::new(Tree::Integer(1)),
+            )),
+            Box::new(Tree::Block(vec![Tree::Assign(
+                Box::new(Tree::Var("a".to_string())),
+                Box::new(Tree::BinOp(
+                    Op::Add,
+                    Box::new(Tree::Var("a".to_string())),
+                    Box::new(Tree::Integer(1)),
+                )),
+            )])),
+        );
+
+        assert_tree_eq(&tree, &expected);
+    }
+
+    #[test]
+    fn parse_for_with_missing_parts() {
+        let tree = parse_one("for(;;) return 0;");
+        let expected = Tree::For(
+            None,
+            None,
+            None,
+            Box::new(Tree::Return(Box::new(Tree::Integer(0)))),
+        );
 
         assert_tree_eq(&tree, &expected);
     }

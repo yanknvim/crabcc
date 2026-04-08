@@ -176,6 +176,15 @@ impl<W: Write> Codegen<W> {
 
     fn gen_stmt(&mut self, tree: &Tree) -> io::Result<()> {
         match tree {
+            Tree::Block(trees) => {
+                self.env.push(HashMap::new());
+
+                for tree in trees {
+                    self.gen_stmt(&tree)?;
+                }
+
+                self.env.pop();
+            }
             Tree::If(cond, a, b) => {
                 self.gen_expr(cond)?;
                 self.pop("t0")?;

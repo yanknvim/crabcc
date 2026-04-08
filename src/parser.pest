@@ -10,7 +10,9 @@ mul_op = { "*" | "/" }
 
 program = { stmt* }
 
-stmt = { if_stmt | while_stmt | for_stmt | return_stmt | expr_stmt }
+stmt = { if_stmt | while_stmt | for_stmt | return_stmt | expr_stmt | block }
+
+block = { "{" ~ stmt* ~ "}" }
 
 if_stmt = { "if" ~ "(" ~ expr ~ ")" ~ stmt ~ ( "else" ~ stmt )? }
 
