@@ -1,4 +1,4 @@
-use pest::{Parser, iterators::Pair};
+use pest::{iterators::Pair, Parser};
 use pest_derive::Parser;
 
 #[derive(Parser)]
@@ -535,7 +535,7 @@ mod tests {
 
     #[test]
     fn parse_function_definition() {
-        let tree = parse_one("add(a,b){return a+b;}");
+        let tree = parse_one("int add(a,b){return a+b;}");
         let expected = Tree::FuncDef(
             "add".to_string(),
             vec!["a".to_string(), "b".to_string()],
@@ -544,6 +544,30 @@ mod tests {
                 Box::new(Tree::Var("a".to_string())),
                 Box::new(Tree::Var("b".to_string())),
             )))])),
+        );
+
+        assert_tree_eq(&tree, &expected);
+    }
+
+    #[test]
+    fn parse_main_function_definition() {
+        let tree = parse_one("int main(){return 0;}");
+        let expected = Tree::FuncDef(
+            "main".to_string(),
+            vec![],
+            Box::new(Tree::Block(vec![Tree::Return(Box::new(Tree::Integer(0)))])),
+        );
+
+        assert_tree_eq(&tree, &expected);
+    }
+
+    #[test]
+    fn parse_allows_newlines() {
+        let tree = parse_one("int main()\n{\nreturn 0;\n}\n");
+        let expected = Tree::FuncDef(
+            "main".to_string(),
+            vec![],
+            Box::new(Tree::Block(vec![Tree::Return(Box::new(Tree::Integer(0)))])),
         );
 
         assert_tree_eq(&tree, &expected);

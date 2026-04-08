@@ -2,6 +2,7 @@ mod codegen;
 mod parser;
 
 use std::env;
+use std::fs;
 use std::io::stdout;
 
 use crate::codegen::Codegen;
@@ -14,7 +15,9 @@ fn main() {
         panic!("invalid number of args");
     }
 
-    let tree = parse(&args[1]);
+    let source_path = &args[1];
+    let source = fs::read_to_string(source_path).expect("failed to read source file");
+    let tree = parse(&source);
     let mut codegen = Codegen::new(tree, stdout());
     codegen.generate().unwrap();
 }
