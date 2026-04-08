@@ -44,10 +44,16 @@ impl<W: Write> Codegen<W> {
     }
 
     fn collect_locals(tree: &Tree, locals: &mut HashSet<String>) {
-        if let Tree::Assign(lhs, _) = tree
-            && let Tree::Var(name) = &**lhs
-        {
-            locals.insert(name.clone());
+        match tree {
+            Tree::Assign(lhs, _) => {
+                if let Tree::Var(name) = &**lhs {
+                    locals.insert(name.clone());
+                }
+            }
+            Tree::VarDeclare(name) => {
+                locals.insert(name.clone());
+            }
+            _ => {}
         }
 
         for child in tree.children() {
@@ -154,6 +160,15 @@ impl<W: Write> Codegen<W> {
                     panic!("Not declared variable: {}", name);
                 }
             }
+            Tree::Addr(expr) => {
+                self.gen_lvalue(expr)?;
+            }
+            Tree::Deref(expr) => {
+                self.gen_expr(expr)?;
+                self.pop("t0")?;
+                writeln!(self.writer, "    ld t0, 0(t0)")?;
+                self.push("t0")?;
+            }
             Tree::Call(name, args) => {
                 if args.len() > 8 {
                     panic!("Too much args: {}", name);
@@ -176,22 +191,14 @@ impl<W: Write> Codegen<W> {
                     None => panic!("{} is not declared", name),
                 }
             }
-            Tree::Assign(lhs, rhs) => match **lhs {
-                Tree::Var(ref name) => {
-                    self.gen_expr(rhs)?;
-                    self.pop("t0")?;
-
-                    let offset = if let Some(offset) = self.lookup(name) {
-                        offset
-                    } else {
-                        self.declare(name.to_string())
-                    };
-
-                    writeln!(self.writer, "    sd t0, {}(fp)", offset)?;
-                    self.push("t0")?;
-                }
-                _ => panic!("{:?} is not a variable", lhs),
-            },
+            Tree::Assign(lhs, rhs) => {
+                self.gen_lvalue(lhs)?;
+                self.gen_expr(rhs)?;
+                self.pop("t1")?;
+                self.pop("t0")?;
+                writeln!(self.writer, "    sd t1, 0(t0)")?;
+                self.push("t1")?;
+            }
             Tree::BinOp(op, lhs, rhs) => {
                 self.gen_expr(lhs)?;
                 self.gen_expr(rhs)?;
@@ -242,6 +249,9 @@ impl<W: Write> Codegen<W> {
                 }
 
                 self.env.pop();
+            }
+            Tree::VarDeclare(name) => {
+                self.declare(name.to_string());
             }
             Tree::If(cond, a, b) => {
                 self.gen_expr(cond)?;
@@ -312,6 +322,24 @@ impl<W: Write> Codegen<W> {
                 self.gen_expr(tree)?;
                 self.pop("t0")?;
             }
+        }
+
+        Ok(())
+    }
+
+    fn gen_lvalue(&mut self, tree: &Tree) -> io::Result<()> {
+        match tree {
+            Tree::Var(name) => {
+                let offset = self
+                    .lookup(name)
+                    .unwrap_or_else(|| panic!("Not declared variable: {}", name));
+                writeln!(self.writer, "    addi t0, fp, {}", offset)?;
+                self.push("t0")?;
+            }
+            Tree::Deref(expr) => {
+                self.gen_expr(expr)?;
+            }
+            _ => panic!("not an lvalue"),
         }
 
         Ok(())

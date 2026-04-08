@@ -1,4 +1,8 @@
 int main() {
+    int a;
+    int b;
+    int i;
+    int t;
     a = 0;
     b = 1;
     i = 0;

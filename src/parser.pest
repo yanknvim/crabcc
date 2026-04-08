@@ -7,12 +7,14 @@ equality_op = { "==" | "!=" }
 relational_op = { ">=" | ">" | "<=" | "<" }
 add_op = { "+" | "-" }
 mul_op = { "*" | "/" }
+unary_op = { add_op | "&" | "*" }
 
 program = { SOI ~ (stmt | func_def)* ~ EOI }
 
 stmt = { if_stmt | while_stmt | for_stmt | return_stmt | expr_stmt | block }
 
-block = { "{" ~ stmt* ~ "}" }
+block = { "{" ~ (stmt | var_declare)* ~ "}" }
+var_declare = { "int" ~ ident ~ ";" }
 
 if_stmt = { "if" ~ "(" ~ expr ~ ")" ~ stmt ~ ( "else" ~ stmt )? }
 
@@ -36,7 +38,7 @@ equality = { relational ~ (equality_op ~ relational)* }
 relational = { add ~ (relational_op ~ add)* }
 add = { mul ~ (add_op ~ mul)* }
 mul = { unary ~ (mul_op ~ unary)* }
-unary = { add_op? ~ primary }
+unary = { unary_op ~ unary | primary }
 primary = { call | integer | ident | "(" ~ expr ~ ")" }
 
 call = { ident ~ "(" ~ args? ~ ")" }

@@ -19,8 +19,13 @@ pub enum Tree {
         Option<Box<Tree>>,
         Box<Tree>,
     ),
+
     Integer(i64),
     Var(String),
+    VarDeclare(String),
+    Addr(Box<Tree>),
+    Deref(Box<Tree>),
+
     Call(String, Vec<Tree>),
     Return(Box<Tree>),
 }
@@ -90,7 +95,7 @@ fn parse_program(pair: Pair<Rule>) -> Vec<Tree> {
                                 .collect();
                         }
                         Rule::block => {
-                            body = Some(Box::new(parse_stmt(item)));
+                            body = Some(Box::new(parse_block(item)));
                         }
                         _ => unreachable!(),
                     }
@@ -114,13 +119,28 @@ fn parse_program(pair: Pair<Rule>) -> Vec<Tree> {
         .collect::<Vec<_>>()
 }
 
+fn parse_block(pair: Pair<Rule>) -> Tree {
+    let inner = pair.into_inner();
+    Tree::Block(
+        inner
+            .map(|p| match p.as_rule() {
+                Rule::stmt => parse_stmt(p),
+                Rule::var_declare => parse_var_declare(p),
+                _ => unreachable!(),
+            })
+            .collect(),
+    )
+}
+
+fn parse_var_declare(pair: Pair<Rule>) -> Tree {
+    let mut inner = pair.into_inner();
+    Tree::VarDeclare(inner.next().unwrap().to_string())
+}
+
 fn parse_stmt(pair: Pair<Rule>) -> Tree {
     match pair.as_rule() {
         Rule::stmt => parse_stmt(pair.into_inner().next().unwrap()),
-        Rule::block => {
-            let inner = pair.into_inner();
-            Tree::Block(inner.map(parse_stmt).collect())
-        }
+        Rule::block => parse_block(pair),
         Rule::if_stmt => {
             let mut inner = pair.into_inner();
             let cond = parse_expr(inner.next().unwrap());
@@ -218,10 +238,13 @@ fn parse_unary(pair: Pair<Rule>) -> Tree {
     }
 
     let op = head.as_str();
-    let operand = parse_primary(inner.next().unwrap());
+    let operand = parse_unary(inner.next().unwrap());
     match op {
         "-" => Tree::BinOp(Op::Sub, Box::new(Tree::Integer(0)), Box::new(operand)),
-        _ => operand,
+        "+" => operand,
+        "&" => Tree::Addr(Box::new(operand)),
+        "*" => Tree::Deref(Box::new(operand)),
+        _ => unreachable!(),
     }
 }
 
@@ -272,6 +295,10 @@ mod tests {
         let trees = parse(s);
         assert_eq!(trees.len(), 1, "expected single statement, got {trees:?}");
         trees.into_iter().next().unwrap()
+    }
+
+    fn parse_one_stmt(s: &str) -> Tree {
+        parse_one(&format!("{{{s}}}"))
     }
 
     fn assert_tree_eq(actual: &Tree, expected: &Tree) {
@@ -535,15 +562,19 @@ mod tests {
 
     #[test]
     fn parse_function_definition() {
-        let tree = parse_one("int add(a,b){return a+b;}");
+        let tree = parse_one("int add(a,b){int a1; int b1; return a+b;}");
         let expected = Tree::FuncDef(
             "add".to_string(),
             vec!["a".to_string(), "b".to_string()],
-            Box::new(Tree::Block(vec![Tree::Return(Box::new(Tree::BinOp(
-                Op::Add,
-                Box::new(Tree::Var("a".to_string())),
-                Box::new(Tree::Var("b".to_string())),
-            )))])),
+            Box::new(Tree::Block(vec![
+                Tree::VarDeclare("a1".to_string()),
+                Tree::VarDeclare("b1".to_string()),
+                Tree::Return(Box::new(Tree::BinOp(
+                    Op::Add,
+                    Box::new(Tree::Var("a".to_string())),
+                    Box::new(Tree::Var("b".to_string())),
+                ))),
+            ])),
         );
 
         assert_tree_eq(&tree, &expected);
@@ -551,11 +582,14 @@ mod tests {
 
     #[test]
     fn parse_main_function_definition() {
-        let tree = parse_one("int main(){return 0;}");
+        let tree = parse_one("int main(){int result; return 0;}");
         let expected = Tree::FuncDef(
             "main".to_string(),
             vec![],
-            Box::new(Tree::Block(vec![Tree::Return(Box::new(Tree::Integer(0)))])),
+            Box::new(Tree::Block(vec![
+                Tree::VarDeclare("result".to_string()),
+                Tree::Return(Box::new(Tree::Integer(0))),
+            ])),
         );
 
         assert_tree_eq(&tree, &expected);
@@ -563,11 +597,14 @@ mod tests {
 
     #[test]
     fn parse_allows_newlines() {
-        let tree = parse_one("int main()\n{\nreturn 0;\n}\n");
+        let tree = parse_one("int main()\n{\nint result;\nreturn 0;\n}\n");
         let expected = Tree::FuncDef(
             "main".to_string(),
             vec![],
-            Box::new(Tree::Block(vec![Tree::Return(Box::new(Tree::Integer(0)))])),
+            Box::new(Tree::Block(vec![
+                Tree::VarDeclare("result".to_string()),
+                Tree::Return(Box::new(Tree::Integer(0))),
+            ])),
         );
 
         assert_tree_eq(&tree, &expected);
@@ -587,6 +624,28 @@ mod tests {
                 ),
             ],
         );
+
+        assert_tree_eq(&tree, &expected);
+    }
+
+    #[test]
+    fn parse_addr_of_expression() {
+        let tree = parse_one_stmt("int a; &a;");
+        let expected = Tree::Block(vec![
+            Tree::VarDeclare("a".to_string()),
+            Tree::Addr(Box::new(Tree::Var("a".to_string()))),
+        ]);
+
+        assert_tree_eq(&tree, &expected);
+    }
+
+    #[test]
+    fn parse_deref_expression() {
+        let tree = parse_one_stmt("int a; *a;");
+        let expected = Tree::Block(vec![
+            Tree::VarDeclare("a".to_string()),
+            Tree::Deref(Box::new(Tree::Var("a".to_string()))),
+        ]);
 
         assert_tree_eq(&tree, &expected);
     }
