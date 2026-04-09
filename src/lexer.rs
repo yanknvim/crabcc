@@ -18,6 +18,9 @@ pub enum Token<'a> {
     #[token("for")]
     For,
 
+    #[token("sizeof")]
+    Sizeof,
+
     #[token("return")]
     Return,
     #[token(";")]
@@ -78,6 +81,7 @@ impl fmt::Display for Token<'_> {
             Token::Else => write!(f, "`else`"),
             Token::While => write!(f, "`while`"),
             Token::For => write!(f, "`for`"),
+            Token::Sizeof => write!(f, "`sizeof`"),
             Token::Return => write!(f, "`return`"),
             Token::Semicolon => write!(f, "`;`"),
             Token::Comma => write!(f, "`,`"),
@@ -156,6 +160,15 @@ mod tests {
                 Token::RParen,
                 Token::Semicolon
             ]
+        );
+    }
+
+    #[test]
+    fn lex_sizeof_keyword() {
+        let tokens = lex("sizeof x;");
+        assert_eq!(
+            tokens,
+            vec![Token::Sizeof, Token::Ident("x"), Token::Semicolon]
         );
     }
 }

@@ -29,6 +29,8 @@ pub enum Tree {
     Addr(Box<Tree>),
     Deref(Box<Tree>),
 
+    Sizeof(Box<Tree>),
+
     Call(String, Vec<Tree>),
     Return(Box<Tree>),
 }
@@ -99,17 +101,22 @@ where
         ));
 
         let unary_expr = recursive(|unary| {
-            unary_operator
-                .then(unary.clone())
-                .map(|(op, expr)| match op {
-                    UnaryOp::Plus => expr,
-                    UnaryOp::Minus => {
-                        Tree::BinOp(Op::Sub, Box::new(Tree::Integer(0)), Box::new(expr))
-                    }
-                    UnaryOp::Addr => Tree::Addr(Box::new(expr)),
-                    UnaryOp::Deref => Tree::Deref(Box::new(expr)),
-                })
-                .or(primary_expr.clone())
+            choice((
+                just(Token::Sizeof)
+                    .ignore_then(unary.clone())
+                    .map(|expr| Tree::Sizeof(Box::new(expr))),
+                unary_operator
+                    .then(unary.clone())
+                    .map(|(op, expr)| match op {
+                        UnaryOp::Plus => expr,
+                        UnaryOp::Minus => {
+                            Tree::BinOp(Op::Sub, Box::new(Tree::Integer(0)), Box::new(expr))
+                        }
+                        UnaryOp::Addr => Tree::Addr(Box::new(expr)),
+                        UnaryOp::Deref => Tree::Deref(Box::new(expr)),
+                    })
+                    .or(primary_expr.clone()),
+            ))
         });
 
         let mul_op = choice((
@@ -441,6 +448,22 @@ mod tests {
                 assert!(matches!(**body, Tree::Return(_)));
             }
             _ => panic!("expected for stmt"),
+        }
+    }
+
+    #[test]
+    fn parse_sizeof_unary() {
+        let (_, _, _, body) = parse_func("int main(){ return sizeof 1 + sizeof x; }");
+        let stmts = expect_block(&body);
+        match &stmts[0] {
+            Tree::Return(expr) => match &**expr {
+                Tree::BinOp(Op::Add, lhs, rhs) => {
+                    assert!(matches!(**lhs, Tree::Sizeof(_)));
+                    assert!(matches!(**rhs, Tree::Sizeof(_)));
+                }
+                _ => panic!("expected add in return"),
+            },
+            _ => panic!("expected return stmt"),
         }
     }
 }

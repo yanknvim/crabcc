@@ -124,6 +124,10 @@ impl TypeChecker {
             Tree::Program(trees) => {
                 TypedTree::Program(trees.iter().map(|t| self.check_tree(t)).collect())
             }
+            Tree::Sizeof(expr) => {
+                let expr = self.check_tree(expr);
+                TypedTree::Integer(expr.ty().size() as i64, Type::Int)
+            }
             Tree::BinOp(op, lhs, rhs) => {
                 let lhs = self.check_tree(lhs);
                 let rhs = self.check_tree(rhs);
@@ -437,5 +441,25 @@ mod tests {
     #[should_panic(expected = "assign type mismatch")]
     fn typecheck_assign_mismatch_panics() {
         let _ = typecheck("int main(){ int *p; int x; p=x; }");
+    }
+
+    #[test]
+    fn typecheck_sizeof_expr() {
+        let trees = typed_program("int main(){ int *p; return sizeof p; }");
+        let func = find_func(&trees, "main");
+
+        match func {
+            TypedTree::FuncDef(_, _, _, body) => match &**body {
+                TypedTree::Block(stmts) => match &stmts[1] {
+                    TypedTree::Return(expr, ret_ty) => {
+                        assert_eq!(ret_ty, &Type::Int);
+                        assert!(matches!(**expr, TypedTree::Integer(8, Type::Int)));
+                    }
+                    _ => panic!("expected return"),
+                },
+                _ => panic!("expected block"),
+            },
+            _ => panic!("expected func"),
+        }
     }
 }
