@@ -55,33 +55,6 @@ enum UnaryOp {
     Deref,
 }
 
-impl Tree {
-    pub fn children(&self) -> Box<dyn Iterator<Item = &Tree> + '_> {
-        match self {
-            Tree::Assign(lhs, rhs) => Box::new([lhs.as_ref(), rhs.as_ref()].into_iter()),
-            Tree::Return(rhs) => Box::new(std::iter::once(rhs.as_ref())),
-            Tree::BinOp(_, lhs, rhs) => Box::new([lhs.as_ref(), rhs.as_ref()].into_iter()),
-            Tree::Program(trees) => Box::new(trees.iter()),
-            Tree::Block(stmts) => Box::new(stmts.iter()),
-            Tree::If(cond, a, Some(b)) => {
-                Box::new([cond.as_ref(), a.as_ref(), b.as_ref()].into_iter())
-            }
-            Tree::If(cond, a, None) => Box::new([cond.as_ref(), a.as_ref()].into_iter()),
-            Tree::While(cond, stmt) => Box::new([cond.as_ref(), stmt.as_ref()].into_iter()),
-            Tree::For(init, cond, update, stmt) => Box::new(
-                init.as_deref()
-                    .into_iter()
-                    .chain(cond.as_deref())
-                    .chain(update.as_deref())
-                    .chain(std::iter::once(stmt.as_ref())),
-            ),
-            Tree::FuncDef(_, _, _, body) => Box::new(std::iter::once(body.as_ref())),
-            Tree::Call(_, args) => Box::new(args.iter()),
-            _ => Box::new(std::iter::empty()),
-        }
-    }
-}
-
 fn parser<'a, I>() -> impl Parser<'a, I, Tree, extra::Err<Rich<'a, Token<'a>, SimpleSpan>>>
 where
     I: Input<'a, Token = Token<'a>, Span = SimpleSpan>,
@@ -264,7 +237,6 @@ where
 
     let func_def = type_parser
         .clone()
-        .clone()
         .then(ident_name)
         .then(
             just(Token::LParen)
@@ -316,7 +288,7 @@ pub fn parse(source: &str) -> Result<Tree, Vec<ParseError>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Op, Tree, parse};
+    use super::{parse, Op, Tree};
     use crate::types::Type;
 
     fn parse_one(source: &str) -> Tree {

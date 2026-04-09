@@ -1,11 +1,12 @@
-use crate::parser::{Op, Tree};
+use crate::parser::Op;
+use crate::sema::TypedTree;
 use crate::types::Type;
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
 
 #[derive(Debug)]
 pub struct Codegen<W: Write> {
-    trees: Vec<Tree>,
+    trees: Vec<TypedTree>,
     env: Vec<HashMap<String, (Type, i64)>>,
     functions: HashMap<String, (Type, usize)>, // name, type, param
     current_frame_size: usize,
@@ -15,9 +16,9 @@ pub struct Codegen<W: Write> {
 }
 
 impl<W: Write> Codegen<W> {
-    pub fn new(tree: Tree, writer: W) -> Self {
+    pub fn new(tree: TypedTree, writer: W) -> Self {
         let trees = match tree {
-            Tree::Program(trees) => trees,
+            TypedTree::Program(trees) => trees,
             _ => panic!("top-level tree must be Program"),
         };
         Self {
@@ -48,21 +49,64 @@ impl<W: Write> Codegen<W> {
         None
     }
 
-    fn collect_locals(tree: &Tree, locals: &mut HashSet<String>) {
+    fn collect_locals(tree: &TypedTree, locals: &mut HashSet<String>) {
         match tree {
-            Tree::Assign(lhs, _) => {
-                if let Tree::Var(name) = &**lhs {
+            TypedTree::Assign(lhs, _, _) => {
+                if let TypedTree::Var(name, _) = &**lhs {
                     locals.insert(name.clone());
                 }
             }
-            Tree::VarDeclare(_ty, name) => {
+            TypedTree::VarDeclare(_ty, name) => {
                 locals.insert(name.clone());
             }
             _ => {}
         }
 
-        for child in tree.children() {
-            Self::collect_locals(child, locals);
+        match tree {
+            TypedTree::Program(trees) | TypedTree::Block(trees) => {
+                for child in trees {
+                    Self::collect_locals(child, locals);
+                }
+            }
+            TypedTree::BinOp(_, lhs, rhs, _) | TypedTree::Assign(lhs, rhs, _) => {
+                Self::collect_locals(lhs, locals);
+                Self::collect_locals(rhs, locals);
+            }
+            TypedTree::If(cond, then_block, else_block) => {
+                Self::collect_locals(cond, locals);
+                Self::collect_locals(then_block, locals);
+                if let Some(else_block) = else_block {
+                    Self::collect_locals(else_block, locals);
+                }
+            }
+            TypedTree::While(cond, body) => {
+                Self::collect_locals(cond, locals);
+                Self::collect_locals(body, locals);
+            }
+            TypedTree::For(init, cond, update, body) => {
+                if let Some(init) = init {
+                    Self::collect_locals(init, locals);
+                }
+                if let Some(cond) = cond {
+                    Self::collect_locals(cond, locals);
+                }
+                if let Some(update) = update {
+                    Self::collect_locals(update, locals);
+                }
+                Self::collect_locals(body, locals);
+            }
+            TypedTree::FuncDef(_, _, _, body) => {
+                Self::collect_locals(body, locals);
+            }
+            TypedTree::Addr(expr, _) | TypedTree::Deref(expr, _) | TypedTree::Return(expr, _) => {
+                Self::collect_locals(expr, locals);
+            }
+            TypedTree::Call(_, args, _) => {
+                for arg in args {
+                    Self::collect_locals(arg, locals);
+                }
+            }
+            TypedTree::Integer(_, _) | TypedTree::Var(_, _) | TypedTree::VarDeclare(_, _) => {}
         }
     }
 
@@ -73,7 +117,7 @@ impl<W: Write> Codegen<W> {
         self.functions.clear();
         let mut has_main = false;
         for tree in &self.trees {
-            if let Tree::FuncDef(ty, name, params, _) = tree {
+            if let TypedTree::FuncDef(ty, name, params, _) = tree {
                 if params.len() > 8 {
                     panic!("Too much params: {}", name);
                 }
@@ -120,9 +164,9 @@ impl<W: Write> Codegen<W> {
         Ok(())
     }
 
-    fn gen_func(&mut self, tree: &Tree) -> io::Result<()> {
+    fn gen_func(&mut self, tree: &TypedTree) -> io::Result<()> {
         match tree {
-            Tree::FuncDef(_ty, name, params, body) => {
+            TypedTree::FuncDef(_ty, name, params, body) => {
                 self.env = vec![HashMap::new()];
                 self.stack_offset = 0;
 
@@ -153,30 +197,30 @@ impl<W: Write> Codegen<W> {
         Ok(())
     }
 
-    fn gen_expr(&mut self, tree: &Tree) -> io::Result<()> {
+    fn gen_expr(&mut self, tree: &TypedTree) -> io::Result<()> {
         match tree {
-            Tree::Integer(n) => {
+            TypedTree::Integer(n, _) => {
                 writeln!(self.writer, "    li t0, {}", n)?;
                 self.push("t0")?;
             }
-            Tree::Var(name) => {
-                if let Some((ty, offset)) = self.lookup(name) {
-                    self.emit_load("t0", "fp", offset, &ty)?;
+            TypedTree::Var(name, ty) => {
+                if let Some((_, offset)) = self.lookup(name) {
+                    self.emit_load("t0", "fp", offset, ty)?;
                     self.push("t0")?;
                 } else {
                     panic!("Not declared variable: {}", name);
                 }
             }
-            Tree::Addr(expr) => {
+            TypedTree::Addr(expr, _) => {
                 self.gen_lvalue(expr)?;
             }
-            Tree::Deref(expr) => {
+            TypedTree::Deref(expr, ty) => {
                 self.gen_expr(expr)?;
                 self.pop("t0")?;
-                self.emit_load("t0", "t0", 0, self.expr_type(expr).deref().unwrap())?;
+                self.emit_load("t0", "t0", 0, ty)?;
                 self.push("t0")?;
             }
-            Tree::Call(name, args) => {
+            TypedTree::Call(name, args, _) => {
                 if args.len() > 8 {
                     panic!("Too much args: {}", name);
                 }
@@ -198,7 +242,7 @@ impl<W: Write> Codegen<W> {
                     None => panic!("{} is not declared", name),
                 }
             }
-            Tree::Assign(lhs, rhs) => {
+            TypedTree::Assign(lhs, rhs, _) => {
                 let ty = self.gen_lvalue(lhs)?;
                 self.gen_expr(rhs)?;
                 self.pop("t1")?;
@@ -207,7 +251,7 @@ impl<W: Write> Codegen<W> {
 
                 self.push("t1")?;
             }
-            Tree::BinOp(op, lhs, rhs) => {
+            TypedTree::BinOp(op, lhs, rhs, _) => {
                 self.gen_expr(lhs)?;
                 self.gen_expr(rhs)?;
 
@@ -247,9 +291,9 @@ impl<W: Write> Codegen<W> {
         Ok(())
     }
 
-    fn gen_stmt(&mut self, tree: &Tree) -> io::Result<()> {
+    fn gen_stmt(&mut self, tree: &TypedTree) -> io::Result<()> {
         match tree {
-            Tree::Block(trees) => {
+            TypedTree::Block(trees) => {
                 self.env.push(HashMap::new());
 
                 for tree in trees {
@@ -258,10 +302,10 @@ impl<W: Write> Codegen<W> {
 
                 self.env.pop();
             }
-            Tree::VarDeclare(ty, name) => {
+            TypedTree::VarDeclare(ty, name) => {
                 self.declare(name.to_string(), ty.clone());
             }
-            Tree::If(cond, a, b) => {
+            TypedTree::If(cond, a, b) => {
                 self.gen_expr(cond)?;
                 self.pop("t0")?;
 
@@ -279,7 +323,7 @@ impl<W: Write> Codegen<W> {
 
                 self.label += 1;
             }
-            Tree::While(cond, stmt) => {
+            TypedTree::While(cond, stmt) => {
                 writeln!(self.writer, "Begin{}:", self.label)?;
 
                 self.gen_expr(cond)?;
@@ -294,7 +338,7 @@ impl<W: Write> Codegen<W> {
 
                 self.label += 1;
             }
-            Tree::For(init, cond, update, stmt) => {
+            TypedTree::For(init, cond, update, stmt) => {
                 if let Some(init) = init {
                     self.gen_expr(init)?;
                     self.pop("t0")?;
@@ -321,7 +365,7 @@ impl<W: Write> Codegen<W> {
 
                 self.label += 1;
             }
-            Tree::Return(expr) => {
+            TypedTree::Return(expr, _) => {
                 self.gen_expr(expr)?;
                 self.pop("a0")?;
                 self.epilogue(self.current_frame_size)?;
@@ -335,54 +379,22 @@ impl<W: Write> Codegen<W> {
         Ok(())
     }
 
-    fn gen_lvalue(&mut self, tree: &Tree) -> io::Result<Type> {
+    fn gen_lvalue(&mut self, tree: &TypedTree) -> io::Result<Type> {
         match tree {
-            Tree::Var(name) => {
-                let (ty, offset) = self
+            TypedTree::Var(name, ty) => {
+                let (_, offset) = self
                     .lookup(name)
                     .unwrap_or_else(|| panic!("Not declared variable: {}", name));
                 writeln!(self.writer, "    addi t0, fp, {}", offset)?;
                 self.push("t0")?;
 
-                Ok(ty)
+                Ok(ty.clone())
             }
-            Tree::Deref(expr) => {
-                let inner_type = self.expr_type(expr);
+            TypedTree::Deref(expr, ty) => {
                 self.gen_expr(expr)?;
-                Ok(inner_type
-                    .deref()
-                    .unwrap_or_else(|| panic!("{:?} is not ptr", expr))
-                    .clone())
+                Ok(ty.clone())
             }
             _ => panic!("not an lvalue"),
-        }
-    }
-
-    fn expr_type(&self, tree: &Tree) -> Type {
-        match tree {
-            Tree::Var(name) => {
-                let (ty, _) = self.lookup(name).expect("Not in env");
-                ty
-            }
-            Tree::Addr(expr) => {
-                let inner_type = self.expr_type(expr);
-                Type::Ptr(Box::new(inner_type))
-            }
-            Tree::Deref(expr) => {
-                let inner_type = self.expr_type(expr);
-                match inner_type {
-                    Type::Ptr(_) => inner_type.deref().unwrap().clone(),
-                    _ => panic!("{:?} is not ptr", expr),
-                }
-            }
-            Tree::Call(name, _) => {
-                let (ty, _) = self.functions.get(name).expect("Not declared function");
-                ty.clone()
-            }
-            Tree::BinOp(_, _, _) => Type::Int,
-            Tree::Assign(lhs, _) => self.expr_type(lhs),
-            Tree::Integer(_) => Type::Int,
-            _ => unimplemented!(),
         }
     }
 

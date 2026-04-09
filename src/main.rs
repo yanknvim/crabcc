@@ -2,6 +2,7 @@ mod codegen;
 mod error;
 mod lexer;
 mod parser;
+mod sema;
 mod types;
 
 use std::env;
@@ -12,6 +13,7 @@ use ariadne::{Color, Label, Report, ReportKind, Source};
 
 use crate::codegen::Codegen;
 use crate::parser::parse;
+use crate::sema::TypeChecker;
 
 fn main() {
     let args: Vec<_> = env::args().collect();
@@ -41,6 +43,8 @@ fn main() {
             std::process::exit(1);
         }
     };
-    let mut codegen = Codegen::new(tree, stdout());
+    let mut checker = TypeChecker::new(tree);
+    let typed_tree = checker.check();
+    let mut codegen = Codegen::new(typed_tree, stdout());
     codegen.generate().unwrap();
 }
