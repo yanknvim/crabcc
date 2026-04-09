@@ -1,4 +1,4 @@
 [tasks.test]
 description = "Run Rust and C tests"
 command = "bash"
-args = ["-lc", "cargo test && bash scripts/run_tests.sh"]
+args = ["-lc", "CC=gcc cargo test && CC= bash scripts/run_tests.sh"]

@@ -14,9 +14,13 @@ pub struct Codegen<W: Write> {
 }
 
 impl<W: Write> Codegen<W> {
-    pub fn new(tree: Vec<Tree>, writer: W) -> Self {
+    pub fn new(tree: Tree, writer: W) -> Self {
+        let trees = match tree {
+            Tree::Program(trees) => trees,
+            _ => panic!("top-level tree must be Program"),
+        };
         Self {
-            trees: tree,
+            trees,
             env: Vec::new(),
             functions: HashMap::new(),
             current_frame_size: 0,
@@ -219,13 +223,13 @@ impl<W: Write> Codegen<W> {
                         writeln!(self.writer, "    sub t0, t1, t0")?;
                         writeln!(self.writer, "    snez t0, t0")?
                     }
-                    Op::GreaterThan => writeln!(self.writer, "    slt t0, t1, t0")?,
-                    Op::GreaterThanOrEq => {
+                    Op::Gt => writeln!(self.writer, "    slt t0, t1, t0")?,
+                    Op::Gte => {
                         writeln!(self.writer, "    slt t0, t0, t1")?;
                         writeln!(self.writer, "    xori t0, t0, 1")?
                     }
-                    Op::LessThan => writeln!(self.writer, "    slt t0, t0, t1")?,
-                    Op::LessThanOrEq => {
+                    Op::Lt => writeln!(self.writer, "    slt t0, t0, t1")?,
+                    Op::Lte => {
                         writeln!(self.writer, "    slt t0, t1, t0")?;
                         writeln!(self.writer, "    xori t0, t0, 1")?
                     }

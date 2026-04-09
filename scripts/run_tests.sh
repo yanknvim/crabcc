@@ -43,7 +43,7 @@ for test in "${tests[@]}"; do
     expect=$(tr -d ' \t\n\r' < "${expect_file}")
   fi
   echo "[test] ${name}"
-  cargo run -- "${test}" > "${asm}"
+  CC= cargo run -- "${test}" > "${asm}"
   env -u NIX_LDFLAGS -u NIX_LDFLAGS_COMPILE "${CC}" -o "${bin}" "${asm}" 2> >(
     while IFS= read -r line; do
       case "${line}" in
