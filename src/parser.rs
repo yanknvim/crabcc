@@ -5,6 +5,7 @@ use logos::Logos;
 
 use crate::error::ParseError;
 use crate::lexer::Token;
+use crate::types::Type;
 
 #[derive(Debug, Clone)]
 pub enum Tree {
@@ -12,7 +13,7 @@ pub enum Tree {
     BinOp(Op, Box<Tree>, Box<Tree>),
     Assign(Box<Tree>, Box<Tree>),
     Block(Vec<Tree>),
-    FuncDef(String, Vec<String>, Box<Tree>),
+    FuncDef(Type, String, Vec<(Type, String)>, Box<Tree>),
     If(Box<Tree>, Box<Tree>, Option<Box<Tree>>),
     While(Box<Tree>, Box<Tree>),
     For(
@@ -24,7 +25,7 @@ pub enum Tree {
 
     Integer(i64),
     Var(String),
-    VarDeclare(String),
+    VarDeclare(Type, String),
     Addr(Box<Tree>),
     Deref(Box<Tree>),
 
@@ -74,7 +75,7 @@ impl Tree {
                     .chain(update.as_deref())
                     .chain(std::iter::once(stmt.as_ref())),
             ),
-            Tree::FuncDef(_, _, body) => Box::new(std::iter::once(body.as_ref())),
+            Tree::FuncDef(_, _, _, body) => Box::new(std::iter::once(body.as_ref())),
             Tree::Call(_, args) => Box::new(args.iter()),
             _ => Box::new(std::iter::empty()),
         }
@@ -87,6 +88,12 @@ where
 {
     let ident_name = select! { Token::Ident(ident) => ident.to_string() };
     let int_lit = select! { Token::Number(n) => Tree::Integer(n as i64) };
+
+    let type_parser = just(Token::Int)
+        .to(Type::Int)
+        .foldl(just(Token::Asterisk).repeated(), |acc, _| {
+            Type::Ptr(Box::new(acc))
+        });
 
     let expr_parser = recursive(|expr| {
         let call_expr = ident_name
@@ -182,15 +189,16 @@ where
             })
     });
 
-    let var_decl = just(Token::Int)
-        .ignore_then(ident_name)
+    let var_decl = type_parser
+        .clone()
+        .then(ident_name)
         .then_ignore(just(Token::Semicolon))
-        .map(Tree::VarDeclare);
+        .map(|(ty, name)| Tree::VarDeclare(ty, name));
 
     let stmt_parser = recursive(|stmt| {
         let block_stmt = just(Token::LBrace)
             .ignore_then(
-                choice((stmt.clone(), var_decl))
+                choice((stmt.clone(), var_decl.clone()))
                     .repeated()
                     .collect::<Vec<_>>(),
             )
@@ -249,13 +257,15 @@ where
         ))
     });
 
-    let param_name = just(Token::Int).ignore_then(ident_name);
+    let param_name = type_parser.clone().then(ident_name);
     let param_list = param_name
         .separated_by(just(Token::Comma))
         .collect::<Vec<_>>();
 
-    let func_def = just(Token::Int)
-        .ignore_then(ident_name)
+    let func_def = type_parser
+        .clone()
+        .clone()
+        .then(ident_name)
         .then(
             just(Token::LParen)
                 .ignore_then(param_list.or_not())
@@ -271,8 +281,8 @@ where
                 .then_ignore(just(Token::RBrace))
                 .map(Tree::Block),
         )
-        .map(|((name, params), body)| {
-            Tree::FuncDef(name, params.unwrap_or_default(), Box::new(body))
+        .map(|(((ty, name), params), body)| {
+            Tree::FuncDef(ty, name, params.unwrap(), Box::new(body))
         });
 
     choice((func_def, stmt_parser))
@@ -307,6 +317,7 @@ pub fn parse(source: &str) -> Result<Tree, Vec<ParseError>> {
 #[cfg(test)]
 mod tests {
     use super::{Op, Tree, parse};
+    use crate::types::Type;
 
     fn parse_one(source: &str) -> Tree {
         match parse(source).unwrap() {
@@ -318,100 +329,146 @@ mod tests {
         }
     }
 
+    fn parse_func(source: &str) -> (Type, String, Vec<(Type, String)>, Tree) {
+        match parse_one(source) {
+            Tree::FuncDef(ty, name, params, body) => (ty, name, params, *body),
+            _ => panic!("expected function definition"),
+        }
+    }
+
+    fn expect_block(tree: &Tree) -> &Vec<Tree> {
+        match tree {
+            Tree::Block(stmts) => stmts,
+            _ => panic!("expected block body"),
+        }
+    }
+
     #[test]
     fn parse_respects_precedence() {
-        let tree = parse_one("int main(){ return 1+2*3; }");
-        match tree {
-            Tree::FuncDef(name, params, body) => {
-                assert_eq!(name, "main");
-                assert!(params.is_empty());
-                match *body {
-                    Tree::Block(stmts) => {
-                        assert_eq!(stmts.len(), 1);
-                        match &stmts[0] {
-                            Tree::Return(expr) => match &**expr {
-                                Tree::BinOp(Op::Add, lhs, rhs) => {
-                                    assert!(matches!(**lhs, Tree::Integer(1)));
-                                    match &**rhs {
-                                        Tree::BinOp(Op::Mul, mul_lhs, mul_rhs) => {
-                                            assert!(matches!(**mul_lhs, Tree::Integer(2)));
-                                            assert!(matches!(**mul_rhs, Tree::Integer(3)));
-                                        }
-                                        _ => panic!("expected multiply in rhs"),
-                                    }
-                                }
-                                _ => panic!("expected add in return"),
-                            },
-                            _ => panic!("expected return stmt"),
+        let (ty, name, params, body) = parse_func("int main(){ return 1+2*3; }");
+        assert_eq!(ty, Type::Int);
+        assert_eq!(name, "main");
+        assert!(params.is_empty());
+        let stmts = expect_block(&body);
+        assert_eq!(stmts.len(), 1);
+        match &stmts[0] {
+            Tree::Return(expr) => match &**expr {
+                Tree::BinOp(Op::Add, lhs, rhs) => {
+                    assert!(matches!(**lhs, Tree::Integer(1)));
+                    match &**rhs {
+                        Tree::BinOp(Op::Mul, mul_lhs, mul_rhs) => {
+                            assert!(matches!(**mul_lhs, Tree::Integer(2)));
+                            assert!(matches!(**mul_rhs, Tree::Integer(3)));
                         }
+                        _ => panic!("expected multiply in rhs"),
                     }
-                    _ => panic!("expected block body"),
                 }
-            }
-            _ => panic!("expected function definition"),
+                _ => panic!("expected add in return"),
+            },
+            _ => panic!("expected return stmt"),
         }
     }
 
     #[test]
     fn parse_if_else_block() {
-        let tree = parse_one("int main(){ if (1) return 2; else return 3; }");
-        match tree {
-            Tree::FuncDef(_, _, body) => match *body {
-                Tree::Block(stmts) => match &stmts[0] {
-                    Tree::If(cond, then_branch, else_branch) => {
-                        assert!(matches!(**cond, Tree::Integer(1)));
-                        assert!(matches!(**then_branch, Tree::Return(_)));
-                        assert!(else_branch.is_some());
-                    }
-                    _ => panic!("expected if stmt"),
-                },
-                _ => panic!("expected block body"),
-            },
-            _ => panic!("expected function definition"),
+        let (_, _, _, body) = parse_func("int main(){ if (1) return 2; else return 3; }");
+        let stmts = expect_block(&body);
+        match &stmts[0] {
+            Tree::If(cond, then_branch, else_branch) => {
+                assert!(matches!(**cond, Tree::Integer(1)));
+                assert!(matches!(**then_branch, Tree::Return(_)));
+                assert!(else_branch.is_some());
+            }
+            _ => panic!("expected if stmt"),
         }
     }
 
     #[test]
     fn parse_while_and_for() {
-        let tree = parse_one("int main(){ int i; while(i) i=i-1; for(i=0;i<3;i=i+1) i; }");
-        match tree {
-            Tree::FuncDef(_, _, body) => match *body {
-                Tree::Block(stmts) => {
-                    assert_eq!(stmts.len(), 3);
-                    assert!(matches!(stmts[0], Tree::VarDeclare(_)));
-                    assert!(matches!(stmts[1], Tree::While(_, _)));
-                    assert!(matches!(stmts[2], Tree::For(_, _, _, _)));
-                }
-                _ => panic!("expected block body"),
-            },
-            _ => panic!("expected function definition"),
-        }
+        let (_, _, _, body) =
+            parse_func("int main(){ int i; while(i) i=i-1; for(i=0;i<3;i=i+1) i; }");
+        let stmts = expect_block(&body);
+        assert_eq!(stmts.len(), 3);
+        assert!(matches!(stmts[0], Tree::VarDeclare(_, _)));
+        assert!(matches!(stmts[1], Tree::While(_, _)));
+        assert!(matches!(stmts[2], Tree::For(_, _, _, _)));
     }
 
     #[test]
     fn parse_call_and_unary() {
-        let tree = parse_one("int main(){ return *&foo(1,2); }");
-        match tree {
-            Tree::FuncDef(_, _, body) => match *body {
-                Tree::Block(stmts) => match &stmts[0] {
-                    Tree::Return(expr) => match &**expr {
-                        Tree::Deref(inner) => match &**inner {
-                            Tree::Addr(call) => match &**call {
-                                Tree::Call(name, args) => {
-                                    assert_eq!(name, "foo");
-                                    assert_eq!(args.len(), 2);
-                                }
-                                _ => panic!("expected call"),
-                            },
-                            _ => panic!("expected addr"),
-                        },
-                        _ => panic!("expected deref"),
+        let (_, _, _, body) = parse_func("int main(){ return *&foo(1,2); }");
+        let stmts = expect_block(&body);
+        match &stmts[0] {
+            Tree::Return(expr) => match &**expr {
+                Tree::Deref(inner) => match &**inner {
+                    Tree::Addr(call) => match &**call {
+                        Tree::Call(name, args) => {
+                            assert_eq!(name, "foo");
+                            assert_eq!(args.len(), 2);
+                        }
+                        _ => panic!("expected call"),
                     },
-                    _ => panic!("expected return stmt"),
+                    _ => panic!("expected addr"),
                 },
-                _ => panic!("expected block body"),
+                _ => panic!("expected deref"),
             },
-            _ => panic!("expected function definition"),
+            _ => panic!("expected return stmt"),
+        }
+    }
+
+    #[test]
+    fn parse_assignment_right_associative() {
+        let (_, _, _, body) = parse_func("int main(){ a=b=1; }");
+        let stmts = expect_block(&body);
+        match &stmts[0] {
+            Tree::Assign(lhs, rhs) => {
+                assert!(matches!(**lhs, Tree::Var(ref name) if name == "a"));
+                match &**rhs {
+                    Tree::Assign(inner_lhs, inner_rhs) => {
+                        assert!(matches!(**inner_lhs, Tree::Var(ref name) if name == "b"));
+                        assert!(matches!(**inner_rhs, Tree::Integer(1)));
+                    }
+                    _ => panic!("expected nested assignment"),
+                }
+            }
+            _ => panic!("expected assignment stmt"),
+        }
+    }
+
+    #[test]
+    fn parse_relational_then_equality() {
+        let (_, _, _, body) = parse_func("int main(){ return 1 < 2 == 0; }");
+        let stmts = expect_block(&body);
+        match &stmts[0] {
+            Tree::Return(expr) => match &**expr {
+                Tree::BinOp(Op::Eq, lhs, rhs) => {
+                    assert!(matches!(**rhs, Tree::Integer(0)));
+                    match &**lhs {
+                        Tree::BinOp(Op::Lt, rel_lhs, rel_rhs) => {
+                            assert!(matches!(**rel_lhs, Tree::Integer(1)));
+                            assert!(matches!(**rel_rhs, Tree::Integer(2)));
+                        }
+                        _ => panic!("expected relational in lhs"),
+                    }
+                }
+                _ => panic!("expected equality in return"),
+            },
+            _ => panic!("expected return stmt"),
+        }
+    }
+
+    #[test]
+    fn parse_for_with_empty_clauses() {
+        let (_, _, _, body) = parse_func("int main(){ for(;;) return 1; }");
+        let stmts = expect_block(&body);
+        match &stmts[0] {
+            Tree::For(init, cond, update, body) => {
+                assert!(init.is_none());
+                assert!(cond.is_none());
+                assert!(update.is_none());
+                assert!(matches!(**body, Tree::Return(_)));
+            }
+            _ => panic!("expected for stmt"),
         }
     }
 }

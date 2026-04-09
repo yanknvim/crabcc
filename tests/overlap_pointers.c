@@ -1,8 +1,11 @@
 int main() {
     int a;
     int *p;
-    a = 5;
+    int *q;
+    a = 0;
     p = &a;
-    *p = 9;
+    q = &a;
+    *p = 7;
+    *q = *q + 3;
     return a;
 }

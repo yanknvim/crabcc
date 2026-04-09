@@ -2,6 +2,7 @@ mod codegen;
 mod error;
 mod lexer;
 mod parser;
+mod types;
 
 use std::env;
 use std::fs;

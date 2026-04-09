@@ -1,12 +1,13 @@
 use crate::parser::{Op, Tree};
+use crate::types::Type;
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
 
 #[derive(Debug)]
 pub struct Codegen<W: Write> {
     trees: Vec<Tree>,
-    env: Vec<HashMap<String, i64>>,
-    functions: HashMap<String, usize>, // name, param
+    env: Vec<HashMap<String, (Type, i64)>>,
+    functions: HashMap<String, (Type, usize)>, // name, type, param
     current_frame_size: usize,
     stack_offset: i64,
     label: usize,
@@ -30,17 +31,17 @@ impl<W: Write> Codegen<W> {
         }
     }
 
-    fn declare(&mut self, name: String) -> i64 {
+    fn declare(&mut self, name: String, ty: Type) -> i64 {
         self.stack_offset -= 8;
         let offset = self.stack_offset;
-        self.env.last_mut().unwrap().insert(name, offset);
+        self.env.last_mut().unwrap().insert(name, (ty, offset));
         offset
     }
 
-    fn lookup(&self, name: &str) -> Option<i64> {
+    fn lookup(&self, name: &str) -> Option<(Type, i64)> {
         for scope in self.env.iter().rev() {
-            if let Some(&offset) = scope.get(name) {
-                return Some(offset);
+            if let Some((ty, offset)) = scope.get(name) {
+                return Some((ty.clone(), *offset));
             }
         }
 
@@ -54,7 +55,7 @@ impl<W: Write> Codegen<W> {
                     locals.insert(name.clone());
                 }
             }
-            Tree::VarDeclare(name) => {
+            Tree::VarDeclare(_ty, name) => {
                 locals.insert(name.clone());
             }
             _ => {}
@@ -72,7 +73,7 @@ impl<W: Write> Codegen<W> {
         self.functions.clear();
         let mut has_main = false;
         for tree in &self.trees {
-            if let Tree::FuncDef(name, params, _) = tree {
+            if let Tree::FuncDef(ty, name, params, _) = tree {
                 if params.len() > 8 {
                     panic!("Too much params: {}", name);
                 }
@@ -82,7 +83,8 @@ impl<W: Write> Codegen<W> {
                 if name == "main" {
                     has_main = true;
                 }
-                self.functions.insert(name.to_string(), params.len());
+                self.functions
+                    .insert(name.to_string(), (ty.clone(), params.len()));
             }
         }
         if !has_main {
@@ -120,7 +122,7 @@ impl<W: Write> Codegen<W> {
 
     fn gen_func(&mut self, tree: &Tree) -> io::Result<()> {
         match tree {
-            Tree::FuncDef(name, params, body) => {
+            Tree::FuncDef(_ty, name, params, body) => {
                 self.env = vec![HashMap::new()];
                 self.stack_offset = 0;
 
@@ -135,8 +137,9 @@ impl<W: Write> Codegen<W> {
                 self.prologue(frame_size)?;
 
                 for (index, param) in params.iter().enumerate() {
-                    let offset = self.declare(param.to_string());
-                    writeln!(self.writer, "    sd a{}, {}(fp)", index, offset)?;
+                    let (ty, name) = param;
+                    let offset = self.declare(name.to_string(), ty.clone());
+                    self.emit_store(&format!("a{}", index), "fp", offset, ty)?;
                 }
 
                 self.gen_stmt(body)?;
@@ -157,8 +160,8 @@ impl<W: Write> Codegen<W> {
                 self.push("t0")?;
             }
             Tree::Var(name) => {
-                if let Some(offset) = self.lookup(name) {
-                    writeln!(self.writer, "    ld t0, {}(fp)", offset)?;
+                if let Some((ty, offset)) = self.lookup(name) {
+                    self.emit_load("t0", "fp", offset, &ty)?;
                     self.push("t0")?;
                 } else {
                     panic!("Not declared variable: {}", name);
@@ -170,7 +173,7 @@ impl<W: Write> Codegen<W> {
             Tree::Deref(expr) => {
                 self.gen_expr(expr)?;
                 self.pop("t0")?;
-                writeln!(self.writer, "    ld t0, 0(t0)")?;
+                self.emit_load("t0", "t0", 0, self.expr_type(expr).deref().unwrap())?;
                 self.push("t0")?;
             }
             Tree::Call(name, args) => {
@@ -179,7 +182,7 @@ impl<W: Write> Codegen<W> {
                 }
 
                 match self.functions.get(name) {
-                    Some(params) if *params == args.len() => {
+                    Some((_, params)) if *params == args.len() => {
                         for arg in args {
                             self.gen_expr(arg)?;
                         }
@@ -196,11 +199,12 @@ impl<W: Write> Codegen<W> {
                 }
             }
             Tree::Assign(lhs, rhs) => {
-                self.gen_lvalue(lhs)?;
+                let ty = self.gen_lvalue(lhs)?;
                 self.gen_expr(rhs)?;
                 self.pop("t1")?;
                 self.pop("t0")?;
-                writeln!(self.writer, "    sd t1, 0(t0)")?;
+                self.emit_store("t1", "t0", 0, &ty)?;
+
                 self.push("t1")?;
             }
             Tree::BinOp(op, lhs, rhs) => {
@@ -254,8 +258,8 @@ impl<W: Write> Codegen<W> {
 
                 self.env.pop();
             }
-            Tree::VarDeclare(name) => {
-                self.declare(name.to_string());
+            Tree::VarDeclare(ty, name) => {
+                self.declare(name.to_string(), ty.clone());
             }
             Tree::If(cond, a, b) => {
                 self.gen_expr(cond)?;
@@ -331,19 +335,72 @@ impl<W: Write> Codegen<W> {
         Ok(())
     }
 
-    fn gen_lvalue(&mut self, tree: &Tree) -> io::Result<()> {
+    fn gen_lvalue(&mut self, tree: &Tree) -> io::Result<Type> {
         match tree {
             Tree::Var(name) => {
-                let offset = self
+                let (ty, offset) = self
                     .lookup(name)
                     .unwrap_or_else(|| panic!("Not declared variable: {}", name));
                 writeln!(self.writer, "    addi t0, fp, {}", offset)?;
                 self.push("t0")?;
+
+                Ok(ty)
             }
             Tree::Deref(expr) => {
+                let inner_type = self.expr_type(expr);
                 self.gen_expr(expr)?;
+                Ok(inner_type
+                    .deref()
+                    .unwrap_or_else(|| panic!("{:?} is not ptr", expr))
+                    .clone())
             }
             _ => panic!("not an lvalue"),
+        }
+    }
+
+    fn expr_type(&self, tree: &Tree) -> Type {
+        match tree {
+            Tree::Var(name) => {
+                let (ty, _) = self.lookup(name).expect("Not in env");
+                ty
+            }
+            Tree::Addr(expr) => {
+                let inner_type = self.expr_type(expr);
+                Type::Ptr(Box::new(inner_type))
+            }
+            Tree::Deref(expr) => {
+                let inner_type = self.expr_type(expr);
+                match inner_type {
+                    Type::Ptr(_) => inner_type.deref().unwrap().clone(),
+                    _ => panic!("{:?} is not ptr", expr),
+                }
+            }
+            Tree::Call(name, _) => {
+                let (ty, _) = self.functions.get(name).expect("Not declared function");
+                ty.clone()
+            }
+            Tree::BinOp(_, _, _) => Type::Int,
+            Tree::Assign(lhs, _) => self.expr_type(lhs),
+            Tree::Integer(_) => Type::Int,
+            _ => unimplemented!(),
+        }
+    }
+
+    fn emit_load(&mut self, reg: &str, base: &str, offset: i64, ty: &Type) -> io::Result<()> {
+        match ty.size() {
+            4 => writeln!(self.writer, "    lw {}, {}({})", reg, offset, base)?,
+            8 => writeln!(self.writer, "    ld {}, {}({})", reg, offset, base)?,
+            _ => unreachable!(),
+        }
+
+        Ok(())
+    }
+
+    fn emit_store(&mut self, reg: &str, base: &str, offset: i64, ty: &Type) -> io::Result<()> {
+        match ty.size() {
+            4 => writeln!(self.writer, "    sw {}, {}({})", reg, offset, base)?,
+            8 => writeln!(self.writer, "    sd {}, {}({})", reg, offset, base)?,
+            _ => unreachable!(),
         }
 
         Ok(())
