@@ -7,9 +7,9 @@ codebase.
 ## Project Snapshot
 
 - Language: Rust (Edition 2024)
-- Target: RISC-V assembly generation
-- Parser: Chumsky (token-based), lexer: Logos
-- Pipeline: Lexer -> Parser/AST -> Codegen
+- Domain: tiny C-like compiler targeting RISC-V assembly
+- Pipeline: Lexer (Logos) -> Parser/AST (Chumsky) -> Type check -> Codegen
+- Error reporting: Ariadne for parse errors
 
 ## Commands
 
@@ -24,7 +24,7 @@ cargo build --release
 # Run all Rust unit tests
 cargo test
 
-# Run a single test by name
+# Run a single test by name (substring match)
 cargo test parse_respects_precedence
 
 # Run all tests in a module
@@ -40,8 +40,8 @@ cargo clippy -- -D warnings
 ```
 
 ### Integration Tests (manual)
-There is no built-in integration runner in this repo. If needed, run a single
-C test manually with a RISC-V toolchain:
+There is no built-in integration runner. To run a single C test with a RISC-V
+toolchain:
 ```bash
 cargo run -- tests/return_42.c > /tmp/out.S
 riscv64-none-elf-gcc -o /tmp/out /tmp/out.S
@@ -54,10 +54,12 @@ Requires: riscv64-none-elf-gcc, spike, pk.
 
 ```
 src/
-  main.rs       CLI entry; reads source, parses, runs codegen
+  main.rs       CLI entry; reads source, parses, type-checks, runs codegen
   lexer.rs      Logos lexer + Token display
   parser.rs     Chumsky parser + AST
   error.rs      ParseError formatting for Ariadne
+  sema.rs       Type checking + typed AST
+  types.rs      Type definitions
   codegen.rs    RISC-V assembly generation
 
 tests/          C source tests with .expect exit codes
@@ -70,6 +72,7 @@ scripts/        helper scripts (if added later)
 - Follow rustfmt defaults.
 - Prefer explicit, small helper functions over large monolithic blocks.
 - Keep public API surface minimal (expose only what other modules need).
+- Keep module responsibilities narrow (lexer/parser/sema/codegen split).
 
 ### Imports
 - Order: std -> external crates -> internal modules.
@@ -87,8 +90,12 @@ use logos::Logos;
 use crate::parser::{Op, Tree};
 ```
 
+### Formatting
+- rustfmt is the source of truth; do not hand-align with spaces.
+- Keep lines readable; extract helpers instead of deep nesting.
+
 ### Naming
-- Types: PascalCase (`Tree`, `Codegen`).
+- Types: PascalCase (`Tree`, `TypedTree`, `Codegen`).
 - Functions/vars: snake_case (`gen_stmt`, `stack_offset`).
 - Constants: SCREAMING_SNAKE_CASE.
 - Use descriptive names for AST variants and helpers.
@@ -99,12 +106,19 @@ use crate::parser::{Op, Tree};
 - `parser.rs` keeps AST + parser logic together; keep helpers close to use.
 - Use Chumsky combinators (`ignore_then`, `then_ignore`) to discard syntax
   tokens while preserving semantic nodes.
+- Parser returns `Result<Tree, Vec<ParseError>>` and does not emit diagnostics.
+
+### Type Checking (sema.rs)
+- Typed AST mirrors the untyped AST with `Type` attached where needed.
+- Use `TypeChecker` methods for scoping, lookup, and validation.
+- Validate lvalues (`Var` or `Deref`) before assignment.
+- Keep panic messages short and specific (used as compiler errors).
 
 ### Error Handling
 - Parsing: return `Result<Tree, Vec<ParseError>>`.
-- `ParseError` formatting lives in `src/error.rs`.
-- Runtime/compiler errors: `panic!` with a clear message.
-- I/O: propagate with `?` where possible.
+- `ParseError` formatting lives in `src/error.rs` and maps Chumsky Rich errors.
+- Compiler/runtime errors: `panic!` with a clear message (no user recovery).
+- I/O: propagate with `?` where possible; `main` uses `expect` for file read.
 
 ### Codegen
 - Use 4-space indentation in emitted assembly.
@@ -112,16 +126,22 @@ use crate::parser::{Op, Tree};
   - temporaries: t0, t1
   - args/returns: a0-a7
 - Stack frame size must be 16-byte aligned (RISC-V ABI).
-- Offsets are negative relative to fp.
+- Offsets are negative relative to fp; keep stack_offset in bytes.
+- Gen functions are split: `gen_stmt`, `gen_expr`, `gen_lvalue`.
 
 ### Tests
 - Unit tests live at file bottom in `#[cfg(test)] mod tests`.
 - Use focused, descriptive test names.
-- Prefer helper functions for repeated patterns (`parse_one`).
+- Prefer helper functions for repeated patterns (`parse_one`, `typed_program`).
+- Test failures should explain the expected shape of AST or typing.
+
+## Cursor/Copilot Rules
+
+- No `.cursor/rules/`, `.cursorrules`, or `.github/copilot-instructions.md`
+  files were found in this repository.
 
 ## Notes for Agents
 
 - This repo previously referenced Pest, but current code uses Chumsky + Logos.
 - `AGENTS.md` is authoritative for agent workflow; update it if conventions
   change.
-- There are no Cursor or Copilot rule files in this repo currently.

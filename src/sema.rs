@@ -235,9 +235,10 @@ impl TypeChecker {
                 let update = update.as_ref().map(|t| self.check_tree(t));
 
                 if let Some(cond) = &cond
-                    && cond.ty() != &Type::Int {
-                        panic!("for condition must be int");
-                    }
+                    && cond.ty() != &Type::Int
+                {
+                    panic!("for condition must be int");
+                }
 
                 let body = self.check_tree(body);
 

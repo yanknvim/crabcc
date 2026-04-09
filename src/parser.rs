@@ -295,7 +295,7 @@ pub fn parse(source: &str) -> Result<Tree, Vec<ParseError>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse, Op, Tree};
+    use super::{Op, Tree, parse};
     use crate::types::Type;
 
     fn parse_one(source: &str) -> Tree {
