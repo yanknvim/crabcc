@@ -20,6 +20,7 @@ pub enum TypedTree {
     ),
 
     Integer(i64, Type),
+    StringLiteral(String, Type),
     Var(String, Type),
     VarDeclare(Type, String),
     Addr(Box<TypedTree>, Type),
@@ -35,6 +36,7 @@ impl TypedTree {
             TypedTree::BinOp(_, _, _, ty) => ty,
             TypedTree::Assign(_, _, ty) => ty,
             TypedTree::Integer(_, ty) => ty,
+            TypedTree::StringLiteral(_, ty) => ty,
             TypedTree::Var(_, ty) => ty,
             TypedTree::Addr(_, ty) => ty,
             TypedTree::Deref(_, ty) => ty,
@@ -51,6 +53,7 @@ pub struct TypeChecker {
     tree: Tree,
     env: Vec<Env>,
     functions: HashMap<String, (Type, Vec<Type>)>,
+    strings: HashMap<String, String>,
     globals: Env,
     current_return: Option<Type>,
 }
@@ -61,6 +64,7 @@ impl TypeChecker {
             tree,
             env: Vec::new(),
             functions: HashMap::new(),
+            strings: HashMap::new(),
             globals: HashMap::new(),
             current_return: None,
         }
@@ -68,6 +72,10 @@ impl TypeChecker {
 
     pub fn globals(&self) -> &Env {
         &self.globals
+    }
+
+    pub fn strings(&self) -> &HashMap<String, String> {
+        &self.strings
     }
 
     pub fn check(&mut self) -> TypedTree {
@@ -248,6 +256,10 @@ impl TypeChecker {
                 )
             }
             Tree::Integer(n) => TypedTree::Integer(*n, Type::Int),
+            Tree::String(s) => {
+                let label = self.add_string_literal(s);
+                TypedTree::StringLiteral(label, Type::Ptr(Box::new(Type::Char)))
+            }
             Tree::Var(name) => {
                 let ty = self
                     .lookup(name)
@@ -357,6 +369,12 @@ impl TypeChecker {
                 op, lhs_type, rhs_type
             ),
         }
+    }
+
+    fn add_string_literal(&mut self, s: &str) -> String {
+        let label = format!("LC{}", self.strings.len());
+        self.strings.insert(label.clone(), s.to_string());
+        label
     }
 }
 

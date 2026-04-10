@@ -24,6 +24,7 @@ pub enum Tree {
     ),
 
     Integer(i64),
+    String(String),
     Var(String),
     Indexed(Box<Tree>, Box<Tree>),
     VarDeclare(Type, String),
@@ -64,6 +65,7 @@ where
 {
     let ident_name = select! { Token::Ident(ident) => ident.to_string() };
     let int_lit = select! { Token::Number(n) => Tree::Integer(n as i64) };
+    let string_lit = select! { Token::String(s) => Tree::String(s.to_string()) };
 
     let type_parser = choice((
             just(Token::Int).to(Type::Int),
@@ -99,6 +101,7 @@ where
         let primary_expr = choice((
             call_expr,
             int_lit,
+            string_lit,
             ident_name.map(Tree::Var),
             just(Token::LParen)
                 .ignore_then(expr.clone())

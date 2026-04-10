@@ -35,6 +35,9 @@ pub enum Token<'a> {
     Number(usize),
     #[regex("[a-zA-Z_][a-zA-Z0-9_]*")]
     Ident(&'a str),
+    // match a double-quoted string including possible escapes, strip surrounding quotes
+    #[regex(r#""([^"\\]|\\.)*""#, |lex| &lex.slice()[1..lex.slice().len()-1])]
+    String(&'a str),
 
     #[token("+")]
     Plus,
@@ -95,6 +98,7 @@ impl fmt::Display for Token<'_> {
             Token::Comma => write!(f, "`,`"),
             Token::Number(value) => write!(f, "number `{value}`"),
             Token::Ident(name) => write!(f, "identifier `{name}`"),
+            Token::String(inner) => write!(f, "stringLiteral `{inner}`"),
             Token::Plus => write!(f, "`+`"),
             Token::Minus => write!(f, "`-`"),
             Token::Asterisk => write!(f, "`*`"),

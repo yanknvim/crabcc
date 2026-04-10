@@ -9,6 +9,7 @@ pub struct Codegen<W: Write> {
     trees: Vec<TypedTree>,
     env: Vec<HashMap<String, (Type, i64)>>,
     globals: Env,
+    strings: HashMap<String, String>,
     functions: HashMap<String, (Type, usize)>, // name, type, param
     current_frame_size: usize,
     stack_offset: i64,
@@ -23,7 +24,7 @@ pub enum VarLocation {
 }
 
 impl<W: Write> Codegen<W> {
-    pub fn new(tree: TypedTree, globals: Env, writer: W) -> Self {
+    pub fn new(tree: TypedTree, globals: Env, strings: HashMap<String, String>, writer: W) -> Self {
         let trees = match tree {
             TypedTree::Program(trees) => trees,
             _ => panic!("top-level tree must be Program"),
@@ -32,6 +33,7 @@ impl<W: Write> Codegen<W> {
             trees,
             env: Vec::new(),
             globals,
+            strings,
             functions: HashMap::new(),
             current_frame_size: 0,
             stack_offset: 0,
@@ -120,7 +122,7 @@ impl<W: Write> Codegen<W> {
                     Self::collect_locals(arg, locals);
                 }
             }
-            TypedTree::Integer(_, _) | TypedTree::Var(_, _) | TypedTree::VarDeclare(_, _) => {}
+            TypedTree::StringLiteral(_, _) | TypedTree::Integer(_, _) | TypedTree::Var(_, _) | TypedTree::VarDeclare(_, _) => {}
         }
     }
 
@@ -130,6 +132,11 @@ impl<W: Write> Codegen<W> {
         for (name, ty) in &self.globals {
             writeln!(self.writer, "{}:", name)?;
             writeln!(self.writer, "    .space {}", ty.size())?;
+        }
+        
+        for (label, s) in &self.strings {
+            writeln!(self.writer, "{}:", label)?;
+            writeln!(self.writer, "    .ascii \"{}\"", s)?;
         }
 
         writeln!(self.writer, ".text")?;
@@ -237,6 +244,10 @@ impl<W: Write> Codegen<W> {
                     }
                     None => panic!("Not declared variable: {}", name)
                 }
+            }
+            TypedTree::StringLiteral(label, _ty) => {
+                writeln!(self.writer, "    la t0, {}", label)?;
+                self.push("t0")?;
             }
             TypedTree::Addr(expr, _) => {
                 self.gen_lvalue(expr)?;
