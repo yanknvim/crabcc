@@ -141,45 +141,7 @@ impl TypeChecker {
                 let lhs = self.check_tree(lhs);
                 let rhs = self.check_tree(rhs);
 
-                let lhs_type = lhs.ty().clone();
-                let rhs_type = rhs.ty().clone();
-
-                match (op, &lhs_type, &rhs_type) {
-                    (_, Type::Int, Type::Int) => {
-                        TypedTree::BinOp(op.clone(), Box::new(lhs), Box::new(rhs), Type::Int)
-                    }
-                    (Op::Add, Type::Ptr(ty), Type::Int) | (Op::Sub, Type::Ptr(ty), Type::Int) => {
-                        TypedTree::BinOp(
-                            op.clone(),
-                            Box::new(lhs),
-                            Box::new(rhs),
-                            Type::Ptr(ty.clone()),
-                        )
-                    }
-                    (Op::Add, Type::Int, Type::Ptr(ty)) => TypedTree::BinOp(
-                        op.clone(),
-                        Box::new(lhs),
-                        Box::new(rhs),
-                        Type::Ptr(ty.clone()),
-                    ),
-                    (Op::Sub, Type::Ptr(lhs_ty), Type::Ptr(rhs_ty)) if lhs_ty == rhs_ty => {
-                        TypedTree::BinOp(op.clone(), Box::new(lhs), Box::new(rhs), Type::Int)
-                    }
-                    (Op::Eq, lhs_ty, rhs_ty)
-                    | (Op::NotEq, lhs_ty, rhs_ty)
-                    | (Op::Gt, lhs_ty, rhs_ty)
-                    | (Op::Gte, lhs_ty, rhs_ty)
-                    | (Op::Lt, lhs_ty, rhs_ty)
-                    | (Op::Lte, lhs_ty, rhs_ty)
-                        if lhs_ty == rhs_ty =>
-                    {
-                        TypedTree::BinOp(op.clone(), Box::new(lhs), Box::new(rhs), Type::Int)
-                    }
-                    _ => panic!(
-                        "{:?} for {:?} and {:?} is not allowed",
-                        op, lhs_type, rhs_type
-                    ),
-                }
+                self.check_binop(op, lhs, rhs)
             }
             Tree::Assign(lhs, rhs) => {
                 let lhs = self.check_tree(lhs);
@@ -271,22 +233,16 @@ impl TypeChecker {
                     _ => TypedTree::Var(name.to_string(), ty),
                 }
             }
-            Tree::Indexed(lhs, index) => {
+            Tree::Indexed(lhs, rhs) => {
                 let lhs = self.check_tree(lhs);
-                let index = self.check_tree(index);
+                let rhs = self.check_tree(rhs);
 
-                let lhs_ty = lhs.ty().clone();
-                let index_ty = index.ty().clone();
+                let typed = self.check_binop(&Op::Add, lhs, rhs);
 
-                TypedTree::Deref(
-                    Box::new(TypedTree::BinOp(
-                        Op::Add,
-                        Box::new(lhs),
-                        Box::new(index),
-                        lhs_ty,
-                    )),
-                    index_ty,
-                )
+                match typed.ty().clone() {
+                    Type::Ptr(inner) => TypedTree::Deref(Box::new(typed.clone()), *inner),
+                    _ => panic!("index for non-pointer value"),
+                }
             }
             Tree::VarDeclare(ty, name) => {
                 self.declare(name.to_string(), ty.clone());
@@ -330,6 +286,48 @@ impl TypeChecker {
                 let ret_ty = expr.ty().clone();
                 TypedTree::Return(Box::new(expr), ret_ty)
             }
+        }
+    }
+
+    fn check_binop(&self, op: &Op, lhs: TypedTree, rhs: TypedTree) -> TypedTree {
+        let lhs_type = lhs.ty().clone();
+        let rhs_type = rhs.ty().clone();
+
+        match (op, &lhs_type, &rhs_type) {
+            (_, Type::Int, Type::Int) => {
+                TypedTree::BinOp(op.clone(), Box::new(lhs), Box::new(rhs), Type::Int)
+            }
+            (Op::Add, Type::Ptr(ty), Type::Int) | (Op::Sub, Type::Ptr(ty), Type::Int) => {
+                TypedTree::BinOp(
+                    op.clone(),
+                    Box::new(lhs),
+                    Box::new(rhs),
+                    Type::Ptr(ty.clone()),
+                )
+            }
+            (Op::Add, Type::Int, Type::Ptr(ty)) => TypedTree::BinOp(
+                op.clone(),
+                Box::new(lhs),
+                Box::new(rhs),
+                Type::Ptr(ty.clone()),
+            ),
+            (Op::Sub, Type::Ptr(lhs_ty), Type::Ptr(rhs_ty)) if lhs_ty == rhs_ty => {
+                TypedTree::BinOp(op.clone(), Box::new(lhs), Box::new(rhs), Type::Int)
+            }
+            (Op::Eq, lhs_ty, rhs_ty)
+            | (Op::NotEq, lhs_ty, rhs_ty)
+            | (Op::Gt, lhs_ty, rhs_ty)
+            | (Op::Gte, lhs_ty, rhs_ty)
+            | (Op::Lt, lhs_ty, rhs_ty)
+            | (Op::Lte, lhs_ty, rhs_ty)
+                if lhs_ty == rhs_ty =>
+            {
+                TypedTree::BinOp(op.clone(), Box::new(lhs), Box::new(rhs), Type::Int)
+            }
+            _ => panic!(
+                "{:?} for {:?} and {:?} is not allowed",
+                op, lhs_type, rhs_type
+            ),
         }
     }
 }
