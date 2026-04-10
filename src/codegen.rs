@@ -33,7 +33,10 @@ impl<W: Write> Codegen<W> {
     }
 
     fn declare(&mut self, name: String, ty: Type) -> i64 {
-        self.stack_offset -= 8;
+        self.stack_offset -= match ty.clone() {
+            Type::Array(inner, size) => inner.size() * size,
+            _ => 8,
+        } as i64;
         let offset = self.stack_offset;
         self.env.last_mut().unwrap().insert(name, (ty, offset));
         offset

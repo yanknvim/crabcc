@@ -125,8 +125,17 @@ impl TypeChecker {
                 TypedTree::Program(trees.iter().map(|t| self.check_tree(t)).collect())
             }
             Tree::Sizeof(expr) => {
-                let expr = self.check_tree(expr);
-                TypedTree::Integer(expr.ty().size() as i64, Type::Int)
+                let size = match &**expr {
+                    Tree::Var(name) => self
+                        .lookup(name)
+                        .unwrap_or_else(|| panic!("not declared variable: {}", name))
+                        .size(),
+                    _ => {
+                        let expr = self.check_tree(expr);
+                        expr.ty().size()
+                    }
+                };
+                TypedTree::Integer(size as i64, Type::Int)
             }
             Tree::BinOp(op, lhs, rhs) => {
                 let lhs = self.check_tree(lhs);
@@ -254,7 +263,30 @@ impl TypeChecker {
                 let ty = self
                     .lookup(name)
                     .unwrap_or_else(|| panic!("not declared variable: {}", name));
-                TypedTree::Var(name.to_string(), ty)
+                match ty.clone() {
+                    Type::Array(inner, _) => TypedTree::Addr(
+                        Box::new(TypedTree::Var(name.to_string(), *inner.clone())),
+                        Type::Ptr(Box::new(*inner)),
+                    ),
+                    _ => TypedTree::Var(name.to_string(), ty),
+                }
+            }
+            Tree::Indexed(lhs, index) => {
+                let lhs = self.check_tree(lhs);
+                let index = self.check_tree(index);
+
+                let lhs_ty = lhs.ty().clone();
+                let index_ty = index.ty().clone();
+
+                TypedTree::Deref(
+                    Box::new(TypedTree::BinOp(
+                        Op::Add,
+                        Box::new(lhs),
+                        Box::new(index),
+                        lhs_ty,
+                    )),
+                    index_ty,
+                )
             }
             Tree::VarDeclare(ty, name) => {
                 self.declare(name.to_string(), ty.clone());
@@ -455,6 +487,100 @@ mod tests {
                     TypedTree::Return(expr, ret_ty) => {
                         assert_eq!(ret_ty, &Type::Int);
                         assert!(matches!(**expr, TypedTree::Integer(8, Type::Int)));
+                    }
+                    _ => panic!("expected return"),
+                },
+                _ => panic!("expected block"),
+            },
+            _ => panic!("expected func"),
+        }
+    }
+
+    #[test]
+    fn typecheck_array_var_decays_to_ptr() {
+        let trees = typed_program("int main(){ int a[4]; return a; }");
+        let func = find_func(&trees, "main");
+
+        match func {
+            TypedTree::FuncDef(_, _, _, body) => match &**body {
+                TypedTree::Block(stmts) => match &stmts[1] {
+                    TypedTree::Return(expr, ret_ty) => {
+                        assert_eq!(ret_ty, &Type::Ptr(Box::new(Type::Int)));
+                        match &**expr {
+                            TypedTree::Addr(inner, addr_ty) => {
+                                assert_eq!(addr_ty, &Type::Ptr(Box::new(Type::Int)));
+                                assert!(matches!(**inner, TypedTree::Var(ref name, Type::Int) if name == "a"));
+                            }
+                            _ => panic!("expected addr from array-to-pointer decay"),
+                        }
+                    }
+                    _ => panic!("expected return"),
+                },
+                _ => panic!("expected block"),
+            },
+            _ => panic!("expected func"),
+        }
+    }
+
+    #[test]
+    fn typecheck_array_index_yields_element_lvalue() {
+        let trees = typed_program("int main(){ int *a; int v; a[2] = v; return a[2]; }");
+        let func = find_func(&trees, "main");
+
+        match func {
+            TypedTree::FuncDef(_, _, _, body) => match &**body {
+                TypedTree::Block(stmts) => {
+                    match &stmts[2] {
+                        TypedTree::Assign(lhs, rhs, ty) => {
+                            assert_eq!(ty, &Type::Int);
+                            assert!(matches!(**rhs, TypedTree::Var(ref name, Type::Int) if name == "v"));
+                            match &**lhs {
+                                TypedTree::Deref(indexed, lhs_ty) => {
+                                    assert_eq!(lhs_ty, &Type::Int);
+                                    match &**indexed {
+                                        TypedTree::BinOp(Op::Add, base, index, ptr_ty) => {
+                                            assert!(matches!(**index, TypedTree::Integer(2, Type::Int)));
+                                            assert_eq!(ptr_ty, &Type::Ptr(Box::new(Type::Int)));
+                                            assert!(matches!(
+                                                **base,
+                                                TypedTree::Var(ref name, Type::Ptr(ref inner))
+                                                    if name == "a" && **inner == Type::Int
+                                            ));
+                                        }
+                                        _ => panic!("expected pointer add for index"),
+                                    }
+                                }
+                                _ => panic!("expected deref on lhs"),
+                            }
+                        }
+                        _ => panic!("expected assign"),
+                    }
+
+                    match &stmts[3] {
+                        TypedTree::Return(expr, ret_ty) => {
+                            assert_eq!(ret_ty, &Type::Int);
+                            assert!(matches!(**expr, TypedTree::Deref(_, Type::Int)));
+                        }
+                        _ => panic!("expected return"),
+                    }
+                }
+                _ => panic!("expected block"),
+            },
+            _ => panic!("expected func"),
+        }
+    }
+
+    #[test]
+    fn typecheck_sizeof_array_expr() {
+        let trees = typed_program("int main(){ int a[4]; return sizeof a; }");
+        let func = find_func(&trees, "main");
+
+        match func {
+            TypedTree::FuncDef(_, _, _, body) => match &**body {
+                TypedTree::Block(stmts) => match &stmts[1] {
+                    TypedTree::Return(expr, ret_ty) => {
+                        assert_eq!(ret_ty, &Type::Int);
+                        assert!(matches!(**expr, TypedTree::Integer(16, Type::Int)));
                     }
                     _ => panic!("expected return"),
                 },

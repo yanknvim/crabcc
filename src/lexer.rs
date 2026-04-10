@@ -31,7 +31,7 @@ pub enum Token<'a> {
 
     #[regex("[0-9]+", |lex| lex.slice().parse::<usize>().unwrap())]
     Number(usize),
-    #[regex("[a-zA-z_][a-zA-Z0-9_]*")]
+    #[regex("[a-zA-Z_][a-zA-Z0-9_]*")]
     Ident(&'a str),
 
     #[token("+")]
@@ -71,6 +71,11 @@ pub enum Token<'a> {
     LBrace,
     #[token("}")]
     RBrace,
+
+    #[token("[")]
+    LBracket,
+    #[token("]")]
+    RBracket,
 }
 
 impl fmt::Display for Token<'_> {
@@ -103,6 +108,8 @@ impl fmt::Display for Token<'_> {
             Token::RParen => write!(f, "`)`"),
             Token::LBrace => write!(f, "`{{`"),
             Token::RBrace => write!(f, "`}}`"),
+            Token::LBracket => write!(f, "`[`"),
+            Token::RBracket => write!(f, "`]`"),
         }
     }
 }

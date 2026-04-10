@@ -25,6 +25,7 @@ pub enum Tree {
 
     Integer(i64),
     Var(String),
+    Indexed(Box<Tree>, Box<Tree>),
     VarDeclare(Type, String),
     Addr(Box<Tree>),
     Deref(Box<Tree>),
@@ -70,6 +71,11 @@ where
             Type::Ptr(Box::new(acc))
         });
 
+    let array_size = just(Token::LBracket)
+        .ignore_then(select! { Token::Number(n) => n })
+        .then_ignore(just(Token::RBracket))
+        .or_not();
+
     let expr_parser = recursive(|expr| {
         let call_expr = ident_name
             .then(
@@ -84,14 +90,23 @@ where
             )
             .map(|(name, args)| Tree::Call(name, args.unwrap_or_default()));
 
+        let array_index = just(Token::LBracket)
+            .ignore_then(expr.clone())
+            .then_ignore(just(Token::RBracket));
+
         let primary_expr = choice((
             call_expr,
             int_lit,
-            ident_name.map(Tree::Var),
+            ident_name.map(|name| Tree::Var(name)),
             just(Token::LParen)
                 .ignore_then(expr.clone())
                 .then_ignore(just(Token::RParen)),
-        ));
+        ))
+        .then(array_index.or_not())
+        .map(|(prim, index)| match index {
+            Some(i) => Tree::Indexed(Box::new(prim), Box::new(i)),
+            None => prim,
+        });
 
         let unary_operator = choice((
             just(Token::Plus).to(UnaryOp::Plus),
@@ -172,8 +187,15 @@ where
     let var_decl = type_parser
         .clone()
         .then(ident_name)
+        .then(array_size)
         .then_ignore(just(Token::Semicolon))
-        .map(|(ty, name)| Tree::VarDeclare(ty, name));
+        .map(|((ty, name), size)| {
+            let ty = match size {
+                Some(size) => Type::Array(Box::new(ty), size),
+                None => ty,
+            };
+            Tree::VarDeclare(ty, name)
+        });
 
     let stmt_parser = recursive(|stmt| {
         let block_stmt = just(Token::LBrace)
@@ -295,7 +317,7 @@ pub fn parse(source: &str) -> Result<Tree, Vec<ParseError>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Op, Tree, parse};
+    use super::{parse, Op, Tree};
     use crate::types::Type;
 
     fn parse_one(source: &str) -> Tree {
@@ -371,6 +393,57 @@ mod tests {
         assert!(matches!(stmts[0], Tree::VarDeclare(_, _)));
         assert!(matches!(stmts[1], Tree::While(_, _)));
         assert!(matches!(stmts[2], Tree::For(_, _, _, _)));
+    }
+
+    #[test]
+    fn parse_array_decl() {
+        let (_, _, _, body) = parse_func("int main(){ int a[10]; }");
+        let stmts = expect_block(&body);
+
+        match &stmts[0] {
+            Tree::VarDeclare(ty, name) => {
+                assert_eq!(name, "a");
+                assert_eq!(ty, &Type::Array(Box::new(Type::Int), 10));
+            }
+            _ => panic!("expected array declaration"),
+        }
+    }
+
+    #[test]
+    fn parse_array_index_expr() {
+        let (_, _, _, body) = parse_func("int main(){ return a[3]; }");
+        let stmts = expect_block(&body);
+
+        match &stmts[0] {
+            Tree::Return(expr) => match &**expr {
+                Tree::Indexed(inner, index) => {
+                    assert!(matches!(**index, Tree::Integer(3)));
+                    assert!(matches!(**inner, Tree::Var(ref name) if name == "a"));
+                }
+                _ => panic!("expected indexed expression"),
+            },
+            _ => panic!("expected return statement"),
+        }
+    }
+
+    #[test]
+    fn parse_array_index_assignment() {
+        let (_, _, _, body) = parse_func("int main(){ a[1] = 2; }");
+        let stmts = expect_block(&body);
+
+        match &stmts[0] {
+            Tree::Assign(lhs, rhs) => {
+                match &**lhs {
+                    Tree::Indexed(inner, index) => {
+                        assert!(matches!(**index, Tree::Integer(1)));
+                        assert!(matches!(**inner, Tree::Var(ref name) if name == "a"));
+                    }
+                    _ => panic!("expected indexed lvalue"),
+                }
+                assert!(matches!(**rhs, Tree::Integer(2)));
+            }
+            _ => panic!("expected assignment statement"),
+        }
     }
 
     #[test]
