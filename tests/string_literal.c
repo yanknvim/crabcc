@@ -1,3 +1,3 @@
 int main() {
-    return sizeof "a";
+    return "abcd"[2];
 }

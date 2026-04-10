@@ -47,6 +47,8 @@
                 "riscv64gc-unknown-none-elf"
               ];
             })
+
+            perf
           ];
         };
       }
