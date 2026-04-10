@@ -125,7 +125,7 @@ impl<W: Write> Codegen<W> {
     }
 
     pub fn generate(&mut self) -> io::Result<()> {
-        writeln!(self.writer, ".bss")?;
+        writeln!(self.writer, ".data")?;
         writeln!(self.writer, ".align 4")?;
         for (name, ty) in &self.globals {
             writeln!(self.writer, "{}:", name)?;
@@ -436,6 +436,7 @@ impl<W: Write> Codegen<W> {
 
     fn emit_load(&mut self, reg: &str, base: &str, offset: i64, ty: &Type) -> io::Result<()> {
         match ty.size() {
+            1 => writeln!(self.writer, "    lb {}, {}({})", reg, offset, base)?,
             4 => writeln!(self.writer, "    lw {}, {}({})", reg, offset, base)?,
             8 => writeln!(self.writer, "    ld {}, {}({})", reg, offset, base)?,
             _ => unreachable!(),
@@ -446,6 +447,7 @@ impl<W: Write> Codegen<W> {
 
     fn emit_store(&mut self, reg: &str, base: &str, offset: i64, ty: &Type) -> io::Result<()> {
         match ty.size() {
+            1 => writeln!(self.writer, "    sb {}, {}({})", reg, offset, base)?,
             4 => writeln!(self.writer, "    sw {}, {}({})", reg, offset, base)?,
             8 => writeln!(self.writer, "    sd {}, {}({})", reg, offset, base)?,
             _ => unreachable!(),

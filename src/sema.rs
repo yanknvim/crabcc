@@ -192,8 +192,12 @@ impl TypeChecker {
                 let ty = lhs.ty();
 
                 Self::check_lvalue(&lhs);
-                if ty != rhs.ty() {
-                    panic!("assign type mismatch: {:?} = {:?}", ty, rhs.ty());
+
+                match (ty, rhs.ty()) {
+                    (_, _) if ty == rhs.ty() => {},
+                    (Type::Int, Type::Char) => {},
+                    (Type::Char, Type::Int) => {},
+                    _ => panic!("assign type mismatch: {:?} = {:?}", ty, rhs.ty()),
                 }
 
                 TypedTree::Assign(Box::new(lhs.clone()), Box::new(rhs), ty.clone())
@@ -318,10 +322,10 @@ impl TypeChecker {
         let rhs_type = rhs.ty().clone();
 
         match (op, &lhs_type, &rhs_type) {
-            (_, Type::Int, Type::Int) => {
+            (_, Type::Int | Type::Char, Type::Int | Type::Char) => {
                 TypedTree::BinOp(op.clone(), Box::new(lhs), Box::new(rhs), Type::Int)
             }
-            (Op::Add, Type::Ptr(ty), Type::Int) | (Op::Sub, Type::Ptr(ty), Type::Int) => {
+            (Op::Add | Op::Sub, Type::Ptr(ty), Type::Int) => {
                 TypedTree::BinOp(
                     op.clone(),
                     Box::new(lhs),

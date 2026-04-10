@@ -65,8 +65,10 @@ where
     let ident_name = select! { Token::Ident(ident) => ident.to_string() };
     let int_lit = select! { Token::Number(n) => Tree::Integer(n as i64) };
 
-    let type_parser = just(Token::Int)
-        .to(Type::Int)
+    let type_parser = choice((
+            just(Token::Int).to(Type::Int),
+            just(Token::Char).to(Type::Char),
+        ))
         .foldl(just(Token::Asterisk).repeated(), |acc, _| {
             Type::Ptr(Box::new(acc))
         });

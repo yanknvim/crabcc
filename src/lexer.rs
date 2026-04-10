@@ -8,6 +8,8 @@ use logos::Logos;
 pub enum Token<'a> {
     #[token("int")]
     Int,
+    #[token("char")]
+    Char,
 
     #[token("if")]
     If,
@@ -82,6 +84,7 @@ impl fmt::Display for Token<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Token::Int => write!(f, "`int`"),
+            Token::Char => write!(f, "`char`"),
             Token::If => write!(f, "`if`"),
             Token::Else => write!(f, "`else`"),
             Token::While => write!(f, "`while`"),
