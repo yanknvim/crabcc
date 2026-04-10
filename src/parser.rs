@@ -275,7 +275,7 @@ where
         .then(
             just(Token::LBrace)
                 .ignore_then(
-                    choice((stmt_parser.clone(), var_decl))
+                    choice((stmt_parser.clone(), var_decl.clone()))
                         .repeated()
                         .collect::<Vec<_>>(),
                 )
@@ -286,7 +286,7 @@ where
             Tree::FuncDef(ty, name, params.unwrap(), Box::new(body))
         });
 
-    choice((func_def, stmt_parser))
+    choice((func_def, var_decl, stmt_parser))
         .repeated()
         .collect::<Vec<_>>()
         .then_ignore(end())
@@ -317,7 +317,7 @@ pub fn parse(source: &str) -> Result<Tree, Vec<ParseError>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Op, Tree, parse};
+    use super::{parse, Op, Tree};
     use crate::types::Type;
 
     fn parse_one(source: &str) -> Tree {
@@ -537,6 +537,40 @@ mod tests {
                 _ => panic!("expected add in return"),
             },
             _ => panic!("expected return stmt"),
+        }
+    }
+
+    #[test]
+    fn parse_global_decl() {
+        let tree = parse_one("int g;");
+        match tree {
+            Tree::VarDeclare(ty, name) => {
+                assert_eq!(ty, Type::Int);
+                assert_eq!(name, "g");
+            }
+            _ => panic!("expected global var declaration"),
+        }
+    }
+
+    #[test]
+    fn parse_program_with_global_and_func() {
+        let tree = parse("int g; int main(){ return g; }").unwrap();
+        match tree {
+            Tree::Program(trees) => {
+                assert_eq!(trees.len(), 2);
+                match &trees[0] {
+                    Tree::VarDeclare(ty, name) => {
+                        assert_eq!(ty, &Type::Int);
+                        assert_eq!(name, "g");
+                    }
+                    _ => panic!("expected first top-level to be var declare"),
+                }
+                match &trees[1] {
+                    Tree::FuncDef(_, name, _, _) => assert_eq!(name, "main"),
+                    _ => panic!("expected second top-level to be function"),
+                }
+            }
+            _ => panic!("expected program"),
         }
     }
 }

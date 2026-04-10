@@ -45,10 +45,13 @@ impl TypedTree {
     }
 }
 
+pub type Env = HashMap<String, Type>;
+
 pub struct TypeChecker {
     tree: Tree,
-    env: Vec<HashMap<String, Type>>,
+    env: Vec<Env>,
     functions: HashMap<String, (Type, Vec<Type>)>,
+    globals: Env,
     current_return: Option<Type>,
 }
 
@@ -58,14 +61,19 @@ impl TypeChecker {
             tree,
             env: Vec::new(),
             functions: HashMap::new(),
+            globals: HashMap::new(),
             current_return: None,
         }
+    }
+
+    pub fn globals(&self) -> &Env {
+        &self.globals
     }
 
     pub fn check(&mut self) -> TypedTree {
         self.collect_functions();
         let tree = self.tree.clone();
-        self.check_tree(&tree)
+        self.check_program(&tree)
     }
 
     fn collect_functions(&mut self) {
@@ -109,7 +117,8 @@ impl TypeChecker {
                 return Some(ty.clone());
             }
         }
-        None
+
+        self.globals.get(name).cloned()
     }
 
     fn check_lvalue(typed: &TypedTree) {
@@ -119,11 +128,45 @@ impl TypeChecker {
         }
     }
 
+    fn check_program(&mut self, tree: &Tree) -> TypedTree {
+        if let Tree::Program(trees) = tree {
+            TypedTree::Program(trees.iter().filter_map(|tree| match tree {
+                Tree::FuncDef(ty, name, params, body) => {
+                    let prev_return = self.current_return.take();
+                    self.current_return = Some(ty.clone());
+
+                    self.enter_scope();
+                    for (param_ty, param_name) in params {
+                        self.declare(param_name.to_string(), param_ty.clone());
+                    }
+                    let body = self.check_tree(&body);
+                    self.exit_scope();
+
+                    self.current_return = prev_return;
+
+                    Some(TypedTree::FuncDef(
+                        ty.clone(),
+                        name.to_string(),
+                        params.to_vec(),
+                        Box::new(body),
+                    ))
+                }
+                Tree::VarDeclare(ty, name) => {
+                    if let Some(_) = self.globals.insert(name.to_string(), ty.clone()) {
+                        panic!("duplicate of global var: {}", name);
+                    } else {
+                        None
+                    }
+                }
+                _ => panic!("invalid top-level tree")
+            }).collect())
+        } else {
+            panic!("top-level must be program");
+        }
+    }
+
     fn check_tree(&mut self, tree: &Tree) -> TypedTree {
         match tree {
-            Tree::Program(trees) => {
-                TypedTree::Program(trees.iter().map(|t| self.check_tree(t)).collect())
-            }
             Tree::Sizeof(expr) => {
                 let size = match &**expr {
                     Tree::Var(name) => self
@@ -161,26 +204,6 @@ impl TypeChecker {
                 self.exit_scope();
                 checked
             }),
-            Tree::FuncDef(ty, name, params, body) => {
-                let prev_return = self.current_return.take();
-                self.current_return = Some(ty.clone());
-
-                self.enter_scope();
-                for (param_ty, param_name) in params {
-                    self.declare(param_name.to_string(), param_ty.clone());
-                }
-                let body = self.check_tree(body);
-                self.exit_scope();
-
-                self.current_return = prev_return;
-
-                TypedTree::FuncDef(
-                    ty.clone(),
-                    name.to_string(),
-                    params.to_vec(),
-                    Box::new(body),
-                )
-            }
             Tree::If(cond, block_a, block_b) => {
                 let cond = self.check_tree(cond);
                 if cond.ty() != &Type::Int {
@@ -286,6 +309,7 @@ impl TypeChecker {
                 let ret_ty = expr.ty().clone();
                 TypedTree::Return(Box::new(expr), ret_ty)
             }
+            _ => unreachable!()
         }
     }
 
@@ -593,5 +617,31 @@ mod tests {
             },
             _ => panic!("expected func"),
         }
+    }
+
+    #[test]
+    fn globals_are_collected() {
+        let tree = parse("int g; int main(){ return 1; }").unwrap();
+        let mut checker = TypeChecker::new(tree);
+        let typed = checker.check();
+        let globals = checker.globals();
+        assert!(globals.contains_key("g"));
+        assert_eq!(globals.get("g"), Some(&Type::Int));
+
+        match typed {
+            TypedTree::Program(trees) => {
+                // only one function definition should be present
+                assert!(trees.iter().any(|t| matches!(t, TypedTree::FuncDef(_, n, _, _) if n == "main")));
+            }
+            _ => panic!("expected program"),
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "duplicate of global var")]
+    fn duplicate_global_decl_panics() {
+        let tree = parse("int g; int g; int main(){ return 0; }").unwrap();
+        let mut checker = TypeChecker::new(tree);
+        let _ = checker.check();
     }
 }

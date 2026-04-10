@@ -1,5 +1,5 @@
 use crate::parser::Op;
-use crate::sema::TypedTree;
+use crate::sema::{TypedTree, Env};
 use crate::types::Type;
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
@@ -8,6 +8,7 @@ use std::io::{self, Write};
 pub struct Codegen<W: Write> {
     trees: Vec<TypedTree>,
     env: Vec<HashMap<String, (Type, i64)>>,
+    globals: Env,
     functions: HashMap<String, (Type, usize)>, // name, type, param
     current_frame_size: usize,
     stack_offset: i64,
@@ -15,8 +16,14 @@ pub struct Codegen<W: Write> {
     writer: W,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VarLocation {
+    Local(i64),
+    Global(String)
+}
+
 impl<W: Write> Codegen<W> {
-    pub fn new(tree: TypedTree, writer: W) -> Self {
+    pub fn new(tree: TypedTree, globals: Env, writer: W) -> Self {
         let trees = match tree {
             TypedTree::Program(trees) => trees,
             _ => panic!("top-level tree must be Program"),
@@ -24,6 +31,7 @@ impl<W: Write> Codegen<W> {
         Self {
             trees,
             env: Vec::new(),
+            globals,
             functions: HashMap::new(),
             current_frame_size: 0,
             stack_offset: 0,
@@ -42,14 +50,17 @@ impl<W: Write> Codegen<W> {
         offset
     }
 
-    fn lookup(&self, name: &str) -> Option<(Type, i64)> {
+    fn lookup(&self, name: &str) -> Option<(Type, VarLocation)> {
         for scope in self.env.iter().rev() {
             if let Some((ty, offset)) = scope.get(name) {
-                return Some((ty.clone(), *offset));
+                return Some((
+                    ty.clone(),
+                    VarLocation::Local(*offset),
+                ))
             }
         }
 
-        None
+        self.globals.get(name).map(|ty| (ty.clone(), VarLocation::Global(name.to_string())))
     }
 
     fn collect_locals(tree: &TypedTree, locals: &mut HashSet<String>) {
@@ -114,6 +125,13 @@ impl<W: Write> Codegen<W> {
     }
 
     pub fn generate(&mut self) -> io::Result<()> {
+        writeln!(self.writer, ".bss")?;
+        writeln!(self.writer, ".align 4")?;
+        for (name, ty) in &self.globals {
+            writeln!(self.writer, "{}:", name)?;
+            writeln!(self.writer, "    .space {}", ty.size())?;
+        }
+
         writeln!(self.writer, ".text")?;
         writeln!(self.writer, ".globl main")?;
 
@@ -206,12 +224,18 @@ impl<W: Write> Codegen<W> {
                 writeln!(self.writer, "    li t0, {}", n)?;
                 self.push("t0")?;
             }
-            TypedTree::Var(name, ty) => {
-                if let Some((_, offset)) = self.lookup(name) {
-                    self.emit_load("t0", "fp", offset, ty)?;
-                    self.push("t0")?;
-                } else {
-                    panic!("Not declared variable: {}", name);
+            TypedTree::Var(name, _ty) => {
+                match self.lookup(name) {
+                    Some((ty, VarLocation::Local(offset))) => {
+                        self.emit_load("t0", "fp", offset, &ty)?;
+                        self.push("t0")?;
+                    }
+                    Some((ty, VarLocation::Global(name))) => {
+                        writeln!(self.writer, "    la t0, {}", name)?;
+                        self.emit_load("t0", "t0", 0, &ty)?;
+                        self.push("t0")?;
+                    }
+                    None => panic!("Not declared variable: {}", name)
                 }
             }
             TypedTree::Addr(expr, _) => {
@@ -385,11 +409,20 @@ impl<W: Write> Codegen<W> {
     fn gen_lvalue(&mut self, tree: &TypedTree) -> io::Result<Type> {
         match tree {
             TypedTree::Var(name, ty) => {
-                let (_, offset) = self
+                let location = self
                     .lookup(name)
                     .unwrap_or_else(|| panic!("Not declared variable: {}", name));
-                writeln!(self.writer, "    addi t0, fp, {}", offset)?;
-                self.push("t0")?;
+
+                match location {
+                    (_ty, VarLocation::Local(offset)) => {
+                        writeln!(self.writer, "    addi t0, fp, {}", offset)?;
+                        self.push("t0")?;
+                    }
+                    (_ty, VarLocation::Global(name)) => {
+                        writeln!(self.writer, "    la t0, {}", name)?;
+                        self.push("t0")?;
+                    }
+                }
 
                 Ok(ty.clone())
             }

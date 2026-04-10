@@ -45,6 +45,6 @@ fn main() {
     };
     let mut checker = TypeChecker::new(tree);
     let typed_tree = checker.check();
-    let mut codegen = Codegen::new(typed_tree, stdout());
+    let mut codegen = Codegen::new(typed_tree, checker.globals().clone(), stdout());
     codegen.generate().unwrap();
 }
