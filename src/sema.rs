@@ -509,7 +509,9 @@ mod tests {
                         match &**expr {
                             TypedTree::Addr(inner, addr_ty) => {
                                 assert_eq!(addr_ty, &Type::Ptr(Box::new(Type::Int)));
-                                assert!(matches!(**inner, TypedTree::Var(ref name, Type::Int) if name == "a"));
+                                assert!(
+                                    matches!(**inner, TypedTree::Var(ref name, Type::Int) if name == "a")
+                                );
                             }
                             _ => panic!("expected addr from array-to-pointer decay"),
                         }
@@ -533,13 +535,18 @@ mod tests {
                     match &stmts[2] {
                         TypedTree::Assign(lhs, rhs, ty) => {
                             assert_eq!(ty, &Type::Int);
-                            assert!(matches!(**rhs, TypedTree::Var(ref name, Type::Int) if name == "v"));
+                            assert!(
+                                matches!(**rhs, TypedTree::Var(ref name, Type::Int) if name == "v")
+                            );
                             match &**lhs {
                                 TypedTree::Deref(indexed, lhs_ty) => {
                                     assert_eq!(lhs_ty, &Type::Int);
                                     match &**indexed {
                                         TypedTree::BinOp(Op::Add, base, index, ptr_ty) => {
-                                            assert!(matches!(**index, TypedTree::Integer(2, Type::Int)));
+                                            assert!(matches!(
+                                                **index,
+                                                TypedTree::Integer(2, Type::Int)
+                                            ));
                                             assert_eq!(ptr_ty, &Type::Ptr(Box::new(Type::Int)));
                                             assert!(matches!(
                                                 **base,

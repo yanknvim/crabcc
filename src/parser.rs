@@ -97,7 +97,7 @@ where
         let primary_expr = choice((
             call_expr,
             int_lit,
-            ident_name.map(|name| Tree::Var(name)),
+            ident_name.map(Tree::Var),
             just(Token::LParen)
                 .ignore_then(expr.clone())
                 .then_ignore(just(Token::RParen)),
@@ -317,7 +317,7 @@ pub fn parse(source: &str) -> Result<Tree, Vec<ParseError>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse, Op, Tree};
+    use super::{Op, Tree, parse};
     use crate::types::Type;
 
     fn parse_one(source: &str) -> Tree {
