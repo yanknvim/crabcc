@@ -381,14 +381,33 @@ impl TypeChecker {
 #[cfg(test)]
 mod tests {
     use super::{TypeChecker, TypedTree};
-    use crate::parser::{Op, parse};
+    use crate::lexer::Token;
+    use crate::parser::{Op, Tree, parse};
     use crate::types::Type;
 
+    use chumsky::span::SimpleSpan;
+    use logos::Logos;
     use typed_arena::Arena;
-    use crate::parser::Tree;
+
+    fn parse_source<'arena>(
+        arena: &'arena Arena<Tree<'arena>>,
+        source: &'arena str,
+    ) -> &'arena Tree<'arena> {
+        let eoi = SimpleSpan::from(source.len()..source.len());
+        let tokens: Vec<(Token<'arena>, SimpleSpan)> = Token::lexer(source)
+            .spanned()
+            .map(|(token, span)| {
+                let token = token.unwrap_or_else(|err| panic!("lexer error: {}", err));
+                (token, SimpleSpan::from(span))
+            })
+            .collect();
+        let tokens: &'arena [(Token<'arena>, SimpleSpan)] = Box::leak(tokens.into_boxed_slice());
+
+        parse(arena, tokens, eoi).unwrap()
+    }
 
     fn typecheck<'arena>(arena: &'arena Arena<Tree<'arena>>, source: &'arena str) -> TypedTree {
-        let tree = parse(arena, source).unwrap();
+        let tree = parse_source(arena, source);
         let mut checker = TypeChecker::new();
         checker.check(tree)
     }
@@ -656,7 +675,7 @@ mod tests {
     #[test]
     fn globals_are_collected() {
         let arena = Arena::new();
-        let tree = parse(&arena, "int g; int main(){ return 1; }").unwrap();
+        let tree = parse_source(&arena, "int g; int main(){ return 1; }");
         let mut checker = TypeChecker::new();
         let typed = checker.check(tree);
         let globals = checker.globals();
@@ -680,7 +699,7 @@ mod tests {
     #[should_panic(expected = "duplicate of global var")]
     fn duplicate_global_decl_panics() {
         let arena = Arena::new();
-        let tree = parse(&arena, "int g; int g; int main(){ return 0; }").unwrap();
+        let tree = parse_source(&arena, "int g; int g; int main(){ return 0; }");
         let mut checker = TypeChecker::new();
         let _ = checker.check(tree);
     }

@@ -353,12 +353,12 @@ pub fn parse<'src, 'arena>(
     arena: &'arena Arena<Tree<'arena>>,
     tokens: &'src [(Token<'src>, SimpleSpan)],
     eoi: SimpleSpan,
-) -> Result<&'arena Tree<'arena>, Vec<ParseError>> 
-where 
+) -> Result<&'arena Tree<'arena>, Vec<ParseError>>
+where
     'src: 'arena,
 {
     let input = tokens.split_token_span::<Token<'src>, _>(eoi);
-    
+
     let parser = parser(arena);
     match parser.parse(input).into_result() {
         Ok(tree) => Ok(tree),
@@ -369,15 +369,35 @@ where
 #[cfg(test)]
 mod tests {
     use super::{parse, Op, Tree};
+    use crate::lexer::Token;
     use crate::types::Type;
 
+    use chumsky::span::SimpleSpan;
+    use logos::Logos;
     use typed_arena::Arena;
+
+    fn parse_source<'arena>(
+        arena: &'arena Arena<Tree<'arena>>,
+        source: &'arena str,
+    ) -> &'arena Tree<'arena> {
+        let eoi = SimpleSpan::from(source.len()..source.len());
+        let tokens: Vec<(Token<'arena>, SimpleSpan)> = Token::lexer(source)
+            .spanned()
+            .map(|(token, span)| {
+                let token = token.unwrap_or_else(|err| panic!("lexer error: {}", err));
+                (token, SimpleSpan::from(span))
+            })
+            .collect();
+        let tokens: &'arena [(Token<'arena>, SimpleSpan)] = Box::leak(tokens.into_boxed_slice());
+
+        parse(arena, tokens, eoi).unwrap()
+    }
 
     fn parse_one<'arena>(
         arena: &'arena Arena<Tree<'arena>>,
         source: &'arena str,
     ) -> &'arena Tree<'arena> {
-        match parse(arena, source).unwrap() {
+        match parse_source(arena, source) {
             Tree::Program(trees) => {
                 assert_eq!(trees.len(), 1, "expected one top-level item");
                 trees[0]
@@ -413,7 +433,7 @@ mod tests {
         let arena = Arena::new();
         let (ty, name, params, body) = parse_func(&arena, "int main(){ return 1+2*3; }");
         assert_eq!(ty, Type::Int);
-        assert_eq!(*name, "main");
+        assert_eq!(name, "main");
         assert!(params.is_empty());
         let stmts = expect_block(body);
         assert_eq!(stmts.len(), 1);
@@ -633,7 +653,7 @@ mod tests {
     #[test]
     fn parse_program_with_global_and_func() {
         let arena = Arena::new();
-        let tree = parse(&arena, "int g; int main(){ return g; }").unwrap();
+        let tree = parse_source(&arena, "int g; int main(){ return g; }");
         match tree {
             Tree::Program(trees) => {
                 assert_eq!(trees.len(), 2);
