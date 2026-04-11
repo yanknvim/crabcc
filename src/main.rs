@@ -13,8 +13,12 @@ use std::env;
 use std::fs;
 use std::io::stdout;
 
+use chumsky::span::SimpleSpan;
+use logos::Logos;
 use ariadne::{Color, Label, Report, ReportKind, Source};
+use typed_arena::Arena;
 
+use crate::lexer::Token;
 use crate::codegen::Codegen;
 use crate::parser::parse;
 use crate::sema::TypeChecker;
@@ -31,7 +35,24 @@ fn main() {
 
     let source_path = &args[1];
     let source = fs::read_to_string(source_path).expect("failed to read source file");
-    let tree = match parse(&source) {
+
+    let arena = Arena::new();
+
+    let eoi = SimpleSpan::from(source.len()..source.len());
+
+    let lexer = Token::lexer(&source);
+    let tokens: Vec<(Token, SimpleSpan)> = lexer
+        .spanned()
+        .map(|(token, span)| {
+            let token = match token {
+                Ok(token) => token,
+                Err(err) => panic!("lexer error: {}", err),
+            };
+            (token, SimpleSpan::from(span))
+        })
+        .collect();
+
+    let tree = match parse(&arena, &tokens.as_slice(), eoi) {
         Ok(tree) => tree,
         Err(errors) => {
             for error in errors {
@@ -50,8 +71,8 @@ fn main() {
             std::process::exit(1);
         }
     };
-    let mut checker = TypeChecker::new(tree);
-    let typed_tree = checker.check();
+    let mut checker = TypeChecker::new();
+    let typed_tree = checker.check(tree);
     let mut codegen = Codegen::new(
         typed_tree,
         checker.globals().clone(),

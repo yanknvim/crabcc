@@ -50,7 +50,6 @@ impl TypedTree {
 pub type Env = HashMap<String, Type>;
 
 pub struct TypeChecker {
-    tree: Tree,
     env: Vec<Env>,
     functions: HashMap<String, (Type, Vec<Type>)>,
     strings: HashMap<String, String>,
@@ -59,9 +58,8 @@ pub struct TypeChecker {
 }
 
 impl TypeChecker {
-    pub fn new(tree: Tree) -> Self {
+    pub fn new() -> Self {
         Self {
-            tree,
             env: Vec::new(),
             functions: HashMap::new(),
             strings: HashMap::new(),
@@ -78,14 +76,13 @@ impl TypeChecker {
         &self.strings
     }
 
-    pub fn check(&mut self) -> TypedTree {
-        self.collect_functions();
-        let tree = self.tree.clone();
-        self.check_program(&tree)
+    pub fn check(&mut self, tree: &Tree) -> TypedTree {
+        self.collect_functions(tree);
+        self.check_program(tree)
     }
 
-    fn collect_functions(&mut self) {
-        let trees = match &self.tree {
+    fn collect_functions(&mut self, tree: &Tree) {
+        let trees = match tree {
             Tree::Program(trees) => trees,
             _ => panic!("top-level tree must be Program"),
         };
@@ -93,7 +90,7 @@ impl TypeChecker {
         self.functions.clear();
         for tree in trees {
             if let Tree::FuncDef(ty, name, params, _) = tree {
-                if self.functions.contains_key(name) {
+                if self.functions.contains_key(*name) {
                     panic!("double declaration of function: {}", name);
                 }
                 let param_types = params.iter().map(|(ty, _)| ty.clone()).collect();
@@ -158,7 +155,7 @@ impl TypeChecker {
                             Some(TypedTree::FuncDef(
                                 ty.clone(),
                                 name.to_string(),
-                                params.to_vec(),
+                                params.iter().map(|(ty, name)| (ty.clone(), name.to_string())).collect(),
                                 Box::new(body),
                             ))
                         }
@@ -308,7 +305,7 @@ impl TypeChecker {
             Tree::Call(name, args) => {
                 let (ret_ty, params) = self
                     .functions
-                    .get(name)
+                    .get(*name)
                     .unwrap_or_else(|| panic!("{} is not declared", name))
                     .clone();
                 if params.len() != args.len() {
@@ -387,14 +384,17 @@ mod tests {
     use crate::parser::{Op, parse};
     use crate::types::Type;
 
-    fn typecheck(source: &str) -> TypedTree {
-        let tree = parse(source).unwrap();
-        let mut checker = TypeChecker::new(tree);
-        checker.check()
+    use typed_arena::Arena;
+    use crate::parser::Tree;
+
+    fn typecheck<'arena>(arena: &'arena Arena<Tree<'arena>>, source: &'arena str) -> TypedTree {
+        let tree = parse(arena, source).unwrap();
+        let mut checker = TypeChecker::new();
+        checker.check(tree)
     }
 
-    fn typed_program(source: &str) -> Vec<TypedTree> {
-        match typecheck(source) {
+    fn typed_program<'arena>(arena: &'arena Arena<Tree<'arena>>, source: &'arena str) -> Vec<TypedTree> {
+        match typecheck(arena, source) {
             TypedTree::Program(trees) => trees,
             _ => panic!("top-level tree must be Program"),
         }
@@ -409,7 +409,8 @@ mod tests {
 
     #[test]
     fn typecheck_basic_arith() {
-        let trees = typed_program("int main(){ return 1+2*3; }");
+        let arena = Arena::new();
+        let trees = typed_program(&arena, "int main(){ return 1+2*3; }");
         let func = find_func(&trees, "main");
 
         match func {
@@ -434,7 +435,8 @@ mod tests {
 
     #[test]
     fn typecheck_addr_deref() {
-        let trees = typed_program("int main(){ int x; return *&x; }");
+        let arena = Arena::new();
+        let trees = typed_program(&arena, "int main(){ int x; return *&x; }");
         let func = find_func(&trees, "main");
 
         match func {
@@ -466,7 +468,8 @@ mod tests {
 
     #[test]
     fn typecheck_ptr_arith() {
-        let trees = typed_program("int main(){ int *p; return p+1; }");
+        let arena = Arena::new();
+        let trees = typed_program(&arena, "int main(){ int *p; return p+1; }");
         let func = find_func(&trees, "main");
 
         match func {
@@ -491,8 +494,9 @@ mod tests {
 
     #[test]
     fn typecheck_call_args() {
+        let arena = Arena::new();
         let trees =
-            typed_program("int foo(int *p){ return *p; } int main(){ int x; return foo(&x); }");
+            typed_program(&arena, "int foo(int *p){ return *p; } int main(){ int x; return foo(&x); }");
         let func = find_func(&trees, "main");
 
         match func {
@@ -520,12 +524,14 @@ mod tests {
     #[test]
     #[should_panic(expected = "assign type mismatch")]
     fn typecheck_assign_mismatch_panics() {
-        let _ = typecheck("int main(){ int *p; int x; p=x; }");
+        let arena = Arena::new();
+        let _ = typecheck(&arena, "int main(){ int *p; int x; p=x; }");
     }
 
     #[test]
     fn typecheck_sizeof_expr() {
-        let trees = typed_program("int main(){ int *p; return sizeof p; }");
+        let arena = Arena::new();
+        let trees = typed_program(&arena, "int main(){ int *p; return sizeof p; }");
         let func = find_func(&trees, "main");
 
         match func {
@@ -545,7 +551,8 @@ mod tests {
 
     #[test]
     fn typecheck_array_var_decays_to_ptr() {
-        let trees = typed_program("int main(){ int a[4]; return a; }");
+        let arena = Arena::new();
+        let trees = typed_program(&arena, "int main(){ int a[4]; return a; }");
         let func = find_func(&trees, "main");
 
         match func {
@@ -573,7 +580,8 @@ mod tests {
 
     #[test]
     fn typecheck_array_index_yields_element_lvalue() {
-        let trees = typed_program("int main(){ int *a; int v; a[2] = v; return a[2]; }");
+        let arena = Arena::new();
+        let trees = typed_program(&arena, "int main(){ int *a; int v; a[2] = v; return a[2]; }");
         let func = find_func(&trees, "main");
 
         match func {
@@ -626,7 +634,8 @@ mod tests {
 
     #[test]
     fn typecheck_sizeof_array_expr() {
-        let trees = typed_program("int main(){ int a[4]; return sizeof a; }");
+        let arena = Arena::new();
+        let trees = typed_program(&arena, "int main(){ int a[4]; return sizeof a; }");
         let func = find_func(&trees, "main");
 
         match func {
@@ -646,9 +655,10 @@ mod tests {
 
     #[test]
     fn globals_are_collected() {
-        let tree = parse("int g; int main(){ return 1; }").unwrap();
-        let mut checker = TypeChecker::new(tree);
-        let typed = checker.check();
+        let arena = Arena::new();
+        let tree = parse(&arena, "int g; int main(){ return 1; }").unwrap();
+        let mut checker = TypeChecker::new();
+        let typed = checker.check(tree);
         let globals = checker.globals();
         assert!(globals.contains_key("g"));
         assert_eq!(globals.get("g"), Some(&Type::Int));
@@ -669,8 +679,9 @@ mod tests {
     #[test]
     #[should_panic(expected = "duplicate of global var")]
     fn duplicate_global_decl_panics() {
-        let tree = parse("int g; int g; int main(){ return 0; }").unwrap();
-        let mut checker = TypeChecker::new(tree);
-        let _ = checker.check();
+        let arena = Arena::new();
+        let tree = parse(&arena, "int g; int g; int main(){ return 0; }").unwrap();
+        let mut checker = TypeChecker::new();
+        let _ = checker.check(tree);
     }
 }
