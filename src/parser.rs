@@ -68,12 +68,12 @@ where
     let string_lit = select! { Token::String(s) => Tree::String(s.to_string()) };
 
     let type_parser = choice((
-            just(Token::Int).to(Type::Int),
-            just(Token::Char).to(Type::Char),
-        ))
-        .foldl(just(Token::Asterisk).repeated(), |acc, _| {
-            Type::Ptr(Box::new(acc))
-        });
+        just(Token::Int).to(Type::Int),
+        just(Token::Char).to(Type::Char),
+    ))
+    .foldl(just(Token::Asterisk).repeated(), |acc, _| {
+        Type::Ptr(Box::new(acc))
+    });
 
     let array_size = just(Token::LBracket)
         .ignore_then(select! { Token::Number(n) => n })
@@ -322,7 +322,7 @@ pub fn parse(source: &str) -> Result<Tree, Vec<ParseError>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse, Op, Tree};
+    use super::{Op, Tree, parse};
     use crate::types::Type;
 
     fn parse_one(source: &str) -> Tree {

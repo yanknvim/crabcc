@@ -1,7 +1,7 @@
 use crate::parser::Op;
-use crate::sema::{TypedTree, Env};
+use crate::sema::{Env, TypedTree};
 use crate::types::Type;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::io::{self, Write};
 
 #[derive(Debug)]
@@ -20,7 +20,7 @@ pub struct Codegen<W: Write> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VarLocation {
     Local(i64),
-    Global(String)
+    Global(String),
 }
 
 impl<W: Write> Codegen<W> {
@@ -45,7 +45,7 @@ impl<W: Write> Codegen<W> {
     fn declare(&mut self, name: String, ty: Type) -> i64 {
         self.stack_offset -= match ty.clone() {
             Type::Array(inner, size) => inner.size() * size,
-            _ => 8,
+            _ => ty.size(),
         } as i64;
         let offset = self.stack_offset;
         self.env.last_mut().unwrap().insert(name, (ty, offset));
@@ -55,25 +55,24 @@ impl<W: Write> Codegen<W> {
     fn lookup(&self, name: &str) -> Option<(Type, VarLocation)> {
         for scope in self.env.iter().rev() {
             if let Some((ty, offset)) = scope.get(name) {
-                return Some((
-                    ty.clone(),
-                    VarLocation::Local(*offset),
-                ))
+                return Some((ty.clone(), VarLocation::Local(*offset)));
             }
         }
 
-        self.globals.get(name).map(|ty| (ty.clone(), VarLocation::Global(name.to_string())))
+        self.globals
+            .get(name)
+            .map(|ty| (ty.clone(), VarLocation::Global(name.to_string())))
     }
 
-    fn collect_locals(tree: &TypedTree, locals: &mut HashSet<String>) {
+    fn collect_locals(tree: &TypedTree, locals: &mut HashMap<String, Type>) {
         match tree {
             TypedTree::Assign(lhs, _, _) => {
-                if let TypedTree::Var(name, _) = &**lhs {
-                    locals.insert(name.clone());
+                if let TypedTree::Var(name, ty) = &**lhs {
+                    locals.insert(name.clone(), ty.clone());
                 }
             }
-            TypedTree::VarDeclare(_ty, name) => {
-                locals.insert(name.clone());
+            TypedTree::VarDeclare(ty, name) => {
+                locals.insert(name.clone(), ty.clone());
             }
             _ => {}
         }
@@ -122,7 +121,10 @@ impl<W: Write> Codegen<W> {
                     Self::collect_locals(arg, locals);
                 }
             }
-            TypedTree::StringLiteral(_, _) | TypedTree::Integer(_, _) | TypedTree::Var(_, _) | TypedTree::VarDeclare(_, _) => {}
+            TypedTree::StringLiteral(_, _)
+            | TypedTree::Integer(_, _)
+            | TypedTree::Var(_, _)
+            | TypedTree::VarDeclare(_, _) => {}
         }
     }
 
@@ -133,7 +135,7 @@ impl<W: Write> Codegen<W> {
             writeln!(self.writer, "{}:", name)?;
             writeln!(self.writer, "    .space {}", ty.size())?;
         }
-        
+
         for (label, s) in &self.strings {
             writeln!(self.writer, "{}:", label)?;
             writeln!(self.writer, "    .ascii \"{}\"", s)?;
@@ -176,13 +178,15 @@ impl<W: Write> Codegen<W> {
         writeln!(self.writer, "    sd fp, 0(sp)")?;
         writeln!(self.writer, "    addi fp, sp, 0")?;
 
-        writeln!(self.writer, "    addi sp, sp, -{}", frame_size)?;
+        writeln!(self.writer, "    li t0, -{}", frame_size)?;
+        writeln!(self.writer, "    add sp, sp, t0")?;
 
         Ok(())
     }
 
     fn epilogue(&mut self, frame_size: usize) -> io::Result<()> {
-        writeln!(self.writer, "    addi sp, sp, {}", frame_size)?;
+        writeln!(self.writer, "    li t0, {}", frame_size)?;
+        writeln!(self.writer, "    add sp, sp, t0")?;
 
         writeln!(self.writer, "    ld ra, 8(sp)")?;
         writeln!(self.writer, "    ld fp, 0(sp)")?;
@@ -190,6 +194,10 @@ impl<W: Write> Codegen<W> {
         writeln!(self.writer, "    ret")?;
 
         Ok(())
+    }
+
+    fn get_frame_size(types: Vec<&Type>) -> usize {
+        types.iter().map(|ty| ty.size()).sum()
     }
 
     fn gen_func(&mut self, tree: &TypedTree) -> io::Result<()> {
@@ -200,10 +208,12 @@ impl<W: Write> Codegen<W> {
 
                 writeln!(self.writer, "{}:", name)?;
 
-                let mut locals: HashSet<String> = HashSet::new();
+                let mut locals: HashMap<String, Type> = HashMap::new();
                 Self::collect_locals(body, &mut locals);
 
-                let frame_size = ((locals.len() + params.len()) * 8).div_ceil(16) * 16;
+                let locals_size = Self::get_frame_size(locals.values().collect::<Vec<_>>());
+                let params_size = Self::get_frame_size(params.iter().map(|(ty, _)| ty).collect());
+                let frame_size = (locals_size + params_size + 15) & !15;
                 self.current_frame_size = frame_size;
 
                 self.prologue(frame_size)?;
@@ -231,20 +241,18 @@ impl<W: Write> Codegen<W> {
                 writeln!(self.writer, "    li t0, {}", n)?;
                 self.push("t0")?;
             }
-            TypedTree::Var(name, _ty) => {
-                match self.lookup(name) {
-                    Some((ty, VarLocation::Local(offset))) => {
-                        self.emit_load("t0", "fp", offset, &ty)?;
-                        self.push("t0")?;
-                    }
-                    Some((ty, VarLocation::Global(name))) => {
-                        writeln!(self.writer, "    la t0, {}", name)?;
-                        self.emit_load("t0", "t0", 0, &ty)?;
-                        self.push("t0")?;
-                    }
-                    None => panic!("Not declared variable: {}", name)
+            TypedTree::Var(name, _ty) => match self.lookup(name) {
+                Some((ty, VarLocation::Local(offset))) => {
+                    self.emit_load("t0", "fp", offset, &ty)?;
+                    self.push("t0")?;
                 }
-            }
+                Some((ty, VarLocation::Global(name))) => {
+                    writeln!(self.writer, "    la t0, {}", name)?;
+                    self.emit_load("t0", "t0", 0, &ty)?;
+                    self.push("t0")?;
+                }
+                None => panic!("Not declared variable: {}", name),
+            },
             TypedTree::StringLiteral(label, _ty) => {
                 writeln!(self.writer, "    la t0, {}", label)?;
                 self.push("t0")?;
@@ -289,16 +297,54 @@ impl<W: Write> Codegen<W> {
 
                 self.push("t1")?;
             }
-            TypedTree::BinOp(op, lhs, rhs, _) => {
+            TypedTree::BinOp(op, lhs, rhs, _ty) => {
                 self.gen_expr(lhs)?;
                 self.gen_expr(rhs)?;
 
-                self.pop("t1")?;
-                self.pop("t0")?;
+                self.pop("t1")?; // rhs
+                self.pop("t0")?; // lhs
 
+                // Handle pointer arithmetic scaling: when one side is a pointer and the
+                // other is an integer we must scale the integer by the element size.
                 match op {
-                    Op::Add => writeln!(self.writer, "    add t0, t1, t0")?,
-                    Op::Sub => writeln!(self.writer, "    sub t0, t0, t1")?,
+                    Op::Add => {
+                        match (lhs.ty().clone(), rhs.ty().clone()) {
+                            (Type::Ptr(inner), Type::Int) => {
+                                // t0: pointer, t1: int -> scale t1 then add
+                                writeln!(self.writer, "    li t2, {}", inner.size())?;
+                                writeln!(self.writer, "    mul t1, t1, t2")?;
+                                writeln!(self.writer, "    add t0, t0, t1")?;
+                            }
+                            (Type::Int, Type::Ptr(inner)) => {
+                                // t0: int, t1: pointer -> scale t0 then add to pointer
+                                writeln!(self.writer, "    li t2, {}", inner.size())?;
+                                writeln!(self.writer, "    mul t0, t0, t2")?;
+                                writeln!(self.writer, "    add t0, t1, t0")?;
+                            }
+                            _ => {
+                                writeln!(self.writer, "    add t0, t1, t0")?;
+                            }
+                        }
+                    }
+                    Op::Sub => {
+                        match (lhs.ty().clone(), rhs.ty().clone()) {
+                            (Type::Ptr(inner), Type::Int) => {
+                                // pointer - int: scale int then subtract
+                                writeln!(self.writer, "    li t2, {}", inner.size())?;
+                                writeln!(self.writer, "    mul t1, t1, t2")?;
+                                writeln!(self.writer, "    sub t0, t0, t1")?;
+                            }
+                            (Type::Ptr(inner_l), Type::Ptr(_)) => {
+                                // pointer - pointer => (addr_l - addr_r) / elem_size
+                                writeln!(self.writer, "    sub t0, t0, t1")?;
+                                writeln!(self.writer, "    li t2, {}", inner_l.size())?;
+                                writeln!(self.writer, "    div t0, t0, t2")?;
+                            }
+                            _ => {
+                                writeln!(self.writer, "    sub t0, t0, t1")?;
+                            }
+                        }
+                    }
                     Op::Mul => writeln!(self.writer, "    mul t0, t1, t0")?,
                     Op::Div => writeln!(self.writer, "    div t0, t0, t1")?,
                     Op::Eq => {
@@ -344,50 +390,55 @@ impl<W: Write> Codegen<W> {
                 self.declare(name.to_string(), ty.clone());
             }
             TypedTree::If(cond, a, b) => {
+                let current_label = self.label;
+                self.label += 1;
+
                 self.gen_expr(cond)?;
                 self.pop("t0")?;
 
-                writeln!(self.writer, "    beq t0, x0, Else{}", self.label)?;
+                writeln!(self.writer, "    beq t0, x0, Else{}", current_label)?;
                 self.gen_stmt(a)?;
 
                 if let Some(b) = b {
-                    writeln!(self.writer, "    jal x0, End{}", self.label)?;
-                    writeln!(self.writer, "Else{}:", self.label)?;
+                    writeln!(self.writer, "    jal x0, End{}", current_label)?;
+                    writeln!(self.writer, "Else{}:", current_label)?;
                     self.gen_stmt(b)?;
-                    writeln!(self.writer, "End{}:", self.label)?;
+                    writeln!(self.writer, "End{}:", current_label)?;
                 } else {
-                    writeln!(self.writer, "Else{}:", self.label)?;
+                    writeln!(self.writer, "Else{}:", current_label)?;
                 }
-
-                self.label += 1;
             }
             TypedTree::While(cond, stmt) => {
-                writeln!(self.writer, "Begin{}:", self.label)?;
+                let current_label = self.label;
+                self.label += 1;
+
+                writeln!(self.writer, "Begin{}:", current_label)?;
 
                 self.gen_expr(cond)?;
                 self.pop("t0")?;
 
-                writeln!(self.writer, "    beq t0, x0, End{}", self.label)?;
+                writeln!(self.writer, "    beq t0, x0, End{}", current_label)?;
                 self.gen_stmt(stmt)?;
 
-                writeln!(self.writer, "    jal x0, Begin{}", self.label)?;
+                writeln!(self.writer, "    jal x0, Begin{}", current_label)?;
 
-                writeln!(self.writer, "End{}:", self.label)?;
-
-                self.label += 1;
+                writeln!(self.writer, "End{}:", current_label)?;
             }
             TypedTree::For(init, cond, update, stmt) => {
+                let current_label = self.label;
+                self.label += 1;
+
                 if let Some(init) = init {
                     self.gen_expr(init)?;
                     self.pop("t0")?;
                 }
 
-                writeln!(self.writer, "Begin{}:", self.label)?;
+                writeln!(self.writer, "Begin{}:", current_label)?;
 
                 if let Some(cond) = cond {
                     self.gen_expr(cond)?;
                     self.pop("t0")?;
-                    writeln!(self.writer, "    beq t0, x0, End{}", self.label)?;
+                    writeln!(self.writer, "    beq t0, x0, End{}", current_label)?;
                 }
 
                 self.gen_stmt(stmt)?;
@@ -397,11 +448,9 @@ impl<W: Write> Codegen<W> {
                     self.pop("t0")?;
                 }
 
-                writeln!(self.writer, "    jal x0, Begin{}", self.label)?;
+                writeln!(self.writer, "    jal x0, Begin{}", current_label)?;
 
-                writeln!(self.writer, "End{}:", self.label)?;
-
-                self.label += 1;
+                writeln!(self.writer, "End{}:", current_label)?;
             }
             TypedTree::Return(expr, _) => {
                 self.gen_expr(expr)?;
@@ -426,7 +475,8 @@ impl<W: Write> Codegen<W> {
 
                 match location {
                     (_ty, VarLocation::Local(offset)) => {
-                        writeln!(self.writer, "    addi t0, fp, {}", offset)?;
+                        writeln!(self.writer, "    li t1, {}", offset)?;
+                        writeln!(self.writer, "    add t0, fp, t1")?;
                         self.push("t0")?;
                     }
                     (_ty, VarLocation::Global(name)) => {
@@ -446,10 +496,13 @@ impl<W: Write> Codegen<W> {
     }
 
     fn emit_load(&mut self, reg: &str, base: &str, offset: i64, ty: &Type) -> io::Result<()> {
+        writeln!(self.writer, "    li t2, {offset}")?;
+        writeln!(self.writer, "    add t2, t2, {base}")?;
+
         match ty.size() {
-            1 => writeln!(self.writer, "    lb {}, {}({})", reg, offset, base)?,
-            4 => writeln!(self.writer, "    lw {}, {}({})", reg, offset, base)?,
-            8 => writeln!(self.writer, "    ld {}, {}({})", reg, offset, base)?,
+            1 => writeln!(self.writer, "    lb {reg}, 0(t2)")?,
+            4 => writeln!(self.writer, "    lw {reg}, 0(t2)")?,
+            8 => writeln!(self.writer, "    ld {reg}, 0(t2)")?,
             _ => unreachable!(),
         }
 
@@ -457,10 +510,13 @@ impl<W: Write> Codegen<W> {
     }
 
     fn emit_store(&mut self, reg: &str, base: &str, offset: i64, ty: &Type) -> io::Result<()> {
+        writeln!(self.writer, "    li t2, {offset}")?;
+        writeln!(self.writer, "    add t2, t2, {base}")?;
+
         match ty.size() {
-            1 => writeln!(self.writer, "    sb {}, {}({})", reg, offset, base)?,
-            4 => writeln!(self.writer, "    sw {}, {}({})", reg, offset, base)?,
-            8 => writeln!(self.writer, "    sd {}, {}({})", reg, offset, base)?,
+            1 => writeln!(self.writer, "    sb {reg}, 0(t2)")?,
+            4 => writeln!(self.writer, "    sw {reg}, 0(t2)")?,
+            8 => writeln!(self.writer, "    sd {reg}, 0(t2)")?,
             _ => unreachable!(),
         }
 

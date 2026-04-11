@@ -138,36 +138,41 @@ impl TypeChecker {
 
     fn check_program(&mut self, tree: &Tree) -> TypedTree {
         if let Tree::Program(trees) = tree {
-            TypedTree::Program(trees.iter().filter_map(|tree| match tree {
-                Tree::FuncDef(ty, name, params, body) => {
-                    let prev_return = self.current_return.take();
-                    self.current_return = Some(ty.clone());
+            TypedTree::Program(
+                trees
+                    .iter()
+                    .filter_map(|tree| match tree {
+                        Tree::FuncDef(ty, name, params, body) => {
+                            let prev_return = self.current_return.take();
+                            self.current_return = Some(ty.clone());
 
-                    self.enter_scope();
-                    for (param_ty, param_name) in params {
-                        self.declare(param_name.to_string(), param_ty.clone());
-                    }
-                    let body = self.check_tree(&body);
-                    self.exit_scope();
+                            self.enter_scope();
+                            for (param_ty, param_name) in params {
+                                self.declare(param_name.to_string(), param_ty.clone());
+                            }
+                            let body = self.check_tree(body);
+                            self.exit_scope();
 
-                    self.current_return = prev_return;
+                            self.current_return = prev_return;
 
-                    Some(TypedTree::FuncDef(
-                        ty.clone(),
-                        name.to_string(),
-                        params.to_vec(),
-                        Box::new(body),
-                    ))
-                }
-                Tree::VarDeclare(ty, name) => {
-                    if let Some(_) = self.globals.insert(name.to_string(), ty.clone()) {
-                        panic!("duplicate of global var: {}", name);
-                    } else {
-                        None
-                    }
-                }
-                _ => panic!("invalid top-level tree")
-            }).collect())
+                            Some(TypedTree::FuncDef(
+                                ty.clone(),
+                                name.to_string(),
+                                params.to_vec(),
+                                Box::new(body),
+                            ))
+                        }
+                        Tree::VarDeclare(ty, name) => {
+                            if self.globals.insert(name.to_string(), ty.clone()).is_some() {
+                                panic!("duplicate of global var: {}", name);
+                            } else {
+                                None
+                            }
+                        }
+                        _ => panic!("invalid top-level tree"),
+                    })
+                    .collect(),
+            )
         } else {
             panic!("top-level must be program");
         }
@@ -202,9 +207,9 @@ impl TypeChecker {
                 Self::check_lvalue(&lhs);
 
                 match (ty, rhs.ty()) {
-                    (_, _) if ty == rhs.ty() => {},
-                    (Type::Int, Type::Char) => {},
-                    (Type::Char, Type::Int) => {},
+                    (_, _) if ty == rhs.ty() => {}
+                    (Type::Int, Type::Char) => {}
+                    (Type::Char, Type::Int) => {}
                     _ => panic!("assign type mismatch: {:?} = {:?}", ty, rhs.ty()),
                 }
 
@@ -325,7 +330,7 @@ impl TypeChecker {
                 let ret_ty = expr.ty().clone();
                 TypedTree::Return(Box::new(expr), ret_ty)
             }
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
 
@@ -337,14 +342,12 @@ impl TypeChecker {
             (_, Type::Int | Type::Char, Type::Int | Type::Char) => {
                 TypedTree::BinOp(op.clone(), Box::new(lhs), Box::new(rhs), Type::Int)
             }
-            (Op::Add | Op::Sub, Type::Ptr(ty), Type::Int) => {
-                TypedTree::BinOp(
-                    op.clone(),
-                    Box::new(lhs),
-                    Box::new(rhs),
-                    Type::Ptr(ty.clone()),
-                )
-            }
+            (Op::Add | Op::Sub, Type::Ptr(ty), Type::Int) => TypedTree::BinOp(
+                op.clone(),
+                Box::new(lhs),
+                Box::new(rhs),
+                Type::Ptr(ty.clone()),
+            ),
             (Op::Add, Type::Int, Type::Ptr(ty)) => TypedTree::BinOp(
                 op.clone(),
                 Box::new(lhs),
@@ -653,7 +656,11 @@ mod tests {
         match typed {
             TypedTree::Program(trees) => {
                 // only one function definition should be present
-                assert!(trees.iter().any(|t| matches!(t, TypedTree::FuncDef(_, n, _, _) if n == "main")));
+                assert!(
+                    trees
+                        .iter()
+                        .any(|t| matches!(t, TypedTree::FuncDef(_, n, _, _) if n == "main"))
+                );
             }
             _ => panic!("expected program"),
         }
