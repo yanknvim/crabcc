@@ -13,13 +13,13 @@ use std::env;
 use std::fs;
 use std::io::stdout;
 
+use ariadne::{Color, Label, Report, ReportKind, Source};
 use chumsky::span::SimpleSpan;
 use logos::Logos;
-use ariadne::{Color, Label, Report, ReportKind, Source};
 use typed_arena::Arena;
 
-use crate::lexer::Token;
 use crate::codegen::Codegen;
+use crate::lexer::Token;
 use crate::parser::parse;
 use crate::sema::TypeChecker;
 
@@ -52,7 +52,7 @@ fn main() {
         })
         .collect();
 
-    let tree = match parse(&arena, &tokens.as_slice(), eoi) {
+    let tree = match parse(&arena, tokens.as_slice(), eoi) {
         Ok(tree) => tree,
         Err(errors) => {
             for error in errors {

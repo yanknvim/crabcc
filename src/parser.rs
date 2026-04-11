@@ -63,7 +63,7 @@ type ParserErr<'src> = extra::Err<Rich<'src, Token<'src>, SimpleSpan>>;
 
 fn expr_parser<'src, 'arena, I>(
     arena: &'arena Arena<Tree<'arena>>,
-) -> impl Parser<'src, I, &Tree<'arena>, ParserErr<'src>> + 'arena + Clone
+) -> impl Parser<'src, I, &'arena Tree<'arena>, ParserErr<'src>> + 'arena + Clone
 where
     I: Input<'src, Token = Token<'src>, Span = SimpleSpan>,
     'src: 'arena,
@@ -150,24 +150,24 @@ where
         let mul_expr = unary_expr
             .clone()
             .foldl(mul_op.then(unary_expr).repeated(), |lhs, (op, rhs)| {
-                &*arena.alloc(Tree::BinOp(op, &lhs, &rhs))
+                &*arena.alloc(Tree::BinOp(op, lhs, rhs))
             });
 
         let add_expr = mul_expr
             .clone()
             .foldl(add_op.then(mul_expr).repeated(), |lhs, (op, rhs)| {
-                &*arena.alloc(Tree::BinOp(op, &lhs, &rhs))
+                &*arena.alloc(Tree::BinOp(op, lhs, rhs))
             });
 
         let relational_expr = add_expr
             .clone()
             .foldl(relational_op.then(add_expr).repeated(), |lhs, (op, rhs)| {
-                &*arena.alloc(Tree::BinOp(op, &lhs, &rhs))
+                &*arena.alloc(Tree::BinOp(op, lhs, rhs))
             });
 
         let equality_expr = relational_expr.clone().foldl(
             equality_op.then(relational_expr).repeated(),
-            |lhs, (op, rhs)| &*arena.alloc(Tree::BinOp(op, &lhs, &rhs)),
+            |lhs, (op, rhs)| &*arena.alloc(Tree::BinOp(op, lhs, rhs)),
         );
 
         let assign_rhs = just(Token::Assign).ignore_then(expr.clone());
@@ -198,7 +198,7 @@ where
 
 fn stmt_parser<'src, 'arena, I>(
     arena: &'arena Arena<Tree<'arena>>,
-) -> impl Parser<'src, I, &Tree<'arena>, ParserErr<'src>> + 'arena + Clone
+) -> impl Parser<'src, I, &'arena Tree<'arena>, ParserErr<'src>> + 'arena + Clone
 where
     I: Input<'src, Token = Token<'src>, Span = SimpleSpan>,
     'src: 'arena,
@@ -241,7 +241,7 @@ where
         let return_stmt = just(Token::Return)
             .ignore_then(expr_parser(arena))
             .then_ignore(just(Token::Semicolon))
-            .map(|expr| &*arena.alloc(Tree::Return(&expr)));
+            .map(|expr| &*arena.alloc(Tree::Return(expr)));
 
         let if_stmt = just(Token::If)
             .ignore_then(just(Token::LParen))
@@ -286,7 +286,7 @@ where
 
 fn parser<'src, 'arena, I>(
     arena: &'arena Arena<Tree<'arena>>,
-) -> impl Parser<'src, I, &Tree<'arena>, ParserErr<'src>> + 'arena + Clone
+) -> impl Parser<'src, I, &'arena Tree<'arena>, ParserErr<'src>> + 'arena + Clone
 where
     I: Input<'src, Token = Token<'src>, Span = SimpleSpan>,
     'src: 'arena,
@@ -368,7 +368,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{parse, Op, Tree};
+    use super::{Op, Tree, parse};
     use crate::lexer::Token;
     use crate::types::Type;
 

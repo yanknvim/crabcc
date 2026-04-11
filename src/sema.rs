@@ -155,7 +155,10 @@ impl TypeChecker {
                             Some(TypedTree::FuncDef(
                                 ty.clone(),
                                 name.to_string(),
-                                params.iter().map(|(ty, name)| (ty.clone(), name.to_string())).collect(),
+                                params
+                                    .iter()
+                                    .map(|(ty, name)| (ty.clone(), name.to_string()))
+                                    .collect(),
                                 Box::new(body),
                             ))
                         }
@@ -412,7 +415,10 @@ mod tests {
         checker.check(tree)
     }
 
-    fn typed_program<'arena>(arena: &'arena Arena<Tree<'arena>>, source: &'arena str) -> Vec<TypedTree> {
+    fn typed_program<'arena>(
+        arena: &'arena Arena<Tree<'arena>>,
+        source: &'arena str,
+    ) -> Vec<TypedTree> {
         match typecheck(arena, source) {
             TypedTree::Program(trees) => trees,
             _ => panic!("top-level tree must be Program"),
@@ -514,8 +520,10 @@ mod tests {
     #[test]
     fn typecheck_call_args() {
         let arena = Arena::new();
-        let trees =
-            typed_program(&arena, "int foo(int *p){ return *p; } int main(){ int x; return foo(&x); }");
+        let trees = typed_program(
+            &arena,
+            "int foo(int *p){ return *p; } int main(){ int x; return foo(&x); }",
+        );
         let func = find_func(&trees, "main");
 
         match func {
@@ -600,7 +608,10 @@ mod tests {
     #[test]
     fn typecheck_array_index_yields_element_lvalue() {
         let arena = Arena::new();
-        let trees = typed_program(&arena, "int main(){ int *a; int v; a[2] = v; return a[2]; }");
+        let trees = typed_program(
+            &arena,
+            "int main(){ int *a; int v; a[2] = v; return a[2]; }",
+        );
         let func = find_func(&trees, "main");
 
         match func {
