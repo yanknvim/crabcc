@@ -2,39 +2,40 @@ use chumsky::error::Rich;
 use chumsky::prelude::*;
 use chumsky::span::SimpleSpan;
 use logos::Logos;
+use typed_arena::Arena;
 
 use crate::error::ParseError;
 use crate::lexer::Token;
 use crate::types::Type;
 
-#[derive(Debug, Clone)]
-pub enum Tree {
-    Program(Vec<Tree>),
-    BinOp(Op, Box<Tree>, Box<Tree>),
-    Assign(Box<Tree>, Box<Tree>),
-    Block(Vec<Tree>),
-    FuncDef(Type, String, Vec<(Type, String)>, Box<Tree>),
-    If(Box<Tree>, Box<Tree>, Option<Box<Tree>>),
-    While(Box<Tree>, Box<Tree>),
+#[derive(Debug)]
+pub enum Tree<'a> {
+    Program(Vec<&'a Tree<'a>>),
+    BinOp(Op, &'a Tree<'a>, &'a Tree<'a>),
+    Assign(&'a Tree<'a>, &'a Tree<'a>),
+    Block(Vec<&'a Tree<'a>>),
+    FuncDef(Type<'a>, &'a str, Vec<(Type<'a>, &'a str)>, &'a Tree<'a>),
+    If(&'a Tree<'a>, &'a Tree<'a>, Option<&'a Tree<'a>>),
+    While(&'a Tree<'a>, &'a Tree<'a>),
     For(
-        Option<Box<Tree>>,
-        Option<Box<Tree>>,
-        Option<Box<Tree>>,
-        Box<Tree>,
+        Option<&'a Tree<'a>>,
+        Option<&'a Tree<'a>>,
+        Option<&'a Tree<'a>>,
+        &'a Tree<'a>,
     ),
 
     Integer(i64),
-    String(String),
-    Var(String),
-    Indexed(Box<Tree>, Box<Tree>),
-    VarDeclare(Type, String),
-    Addr(Box<Tree>),
-    Deref(Box<Tree>),
+    String(&'a str),
+    Var(&'a str),
+    Indexed(&'a Tree<'a>, &'a Tree<'a>),
+    VarDeclare(Type<'a>, &'a str),
+    Addr(&'a Tree<'a>),
+    Deref(&'a Tree<'a>),
 
-    Sizeof(Box<Tree>),
+    Sizeof(&'a Tree<'a>),
 
-    Call(String, Vec<Tree>),
-    Return(Box<Tree>),
+    Call(&'a str, Vec<&'a Tree<'a>>),
+    Return(&'a Tree<'a>),
 }
 
 #[derive(Debug, Clone)]
@@ -59,20 +60,20 @@ enum UnaryOp {
     Deref,
 }
 
-fn parser<'a, I>() -> impl Parser<'a, I, Tree, extra::Err<Rich<'a, Token<'a>, SimpleSpan>>>
+fn parser<'src, 'arena, I>(arena: &'arena Arena<Tree<'arena>>) -> impl Parser<'src, I, Tree<'arena>, extra::Err<Rich<'src, Token<'src>, SimpleSpan>>>
 where
-    I: Input<'a, Token = Token<'a>, Span = SimpleSpan>,
+    I: Input<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
-    let ident_name = select! { Token::Ident(ident) => ident.to_string() };
+    let ident_name = select! { Token::Ident(ident) => ident };
     let int_lit = select! { Token::Number(n) => Tree::Integer(n as i64) };
-    let string_lit = select! { Token::String(s) => Tree::String(s.to_string()) };
+    let string_lit = select! { Token::String(s) => Tree::String(s) };
 
     let type_parser = choice((
         just(Token::Int).to(Type::Int),
         just(Token::Char).to(Type::Char),
     ))
     .foldl(just(Token::Asterisk).repeated(), |acc, _| {
-        Type::Ptr(Box::new(acc))
+        Type::Ptr(&acc)
     });
 
     let array_size = just(Token::LBracket)
@@ -109,7 +110,7 @@ where
         ))
         .then(array_index.or_not())
         .map(|(prim, index)| match index {
-            Some(i) => Tree::Indexed(Box::new(prim), Box::new(i)),
+            Some(i) => &Tree::Indexed(prim, i),
             None => prim,
         });
 
@@ -124,16 +125,16 @@ where
             choice((
                 just(Token::Sizeof)
                     .ignore_then(unary.clone())
-                    .map(|expr| Tree::Sizeof(Box::new(expr))),
+                    .map(|expr| Tree::Sizeof(expr)),
                 unary_operator
                     .then(unary.clone())
                     .map(|(op, expr)| match op {
                         UnaryOp::Plus => expr,
                         UnaryOp::Minus => {
-                            Tree::BinOp(Op::Sub, Box::new(Tree::Integer(0)), Box::new(expr))
+                            &Tree::BinOp(Op::Sub, &Tree::Integer(0), expr)
                         }
-                        UnaryOp::Addr => Tree::Addr(Box::new(expr)),
-                        UnaryOp::Deref => Tree::Deref(Box::new(expr)),
+                        UnaryOp::Addr => &Tree::Addr(expr),
+                        UnaryOp::Deref => &Tree::Deref(expr),
                     })
                     .or(primary_expr.clone()),
             ))
@@ -158,24 +159,24 @@ where
         let mul_expr = unary_expr
             .clone()
             .foldl(mul_op.then(unary_expr).repeated(), |lhs, (op, rhs)| {
-                Tree::BinOp(op, Box::new(lhs), Box::new(rhs))
+                &Tree::BinOp(op, &lhs, &rhs)
             });
 
         let add_expr = mul_expr
             .clone()
             .foldl(add_op.then(mul_expr).repeated(), |lhs, (op, rhs)| {
-                Tree::BinOp(op, Box::new(lhs), Box::new(rhs))
+                &Tree::BinOp(op, lhs, rhs)
             });
 
         let relational_expr = add_expr
             .clone()
             .foldl(relational_op.then(add_expr).repeated(), |lhs, (op, rhs)| {
-                Tree::BinOp(op, Box::new(lhs), Box::new(rhs))
+                &Tree::BinOp(op, lhs, rhs)
             });
 
         let equality_expr = relational_expr.clone().foldl(
             equality_op.then(relational_expr).repeated(),
-            |lhs, (op, rhs)| Tree::BinOp(op, Box::new(lhs), Box::new(rhs)),
+            |lhs, (op, rhs)| &Tree::BinOp(op, lhs, rhs),
         );
 
         let assign_rhs = just(Token::Assign).ignore_then(expr.clone());
@@ -184,7 +185,7 @@ where
             .clone()
             .then(assign_rhs.or_not())
             .map(|(lhs, rhs)| match rhs {
-                Some(rhs) => Tree::Assign(Box::new(lhs), Box::new(rhs)),
+                Some(rhs) => arena.alloc(Tree::Assign(lhs, rhs)),
                 None => lhs,
             })
     });
@@ -196,10 +197,10 @@ where
         .then_ignore(just(Token::Semicolon))
         .map(|((ty, name), size)| {
             let ty = match size {
-                Some(size) => Type::Array(Box::new(ty), size),
+                Some(size) => Type::Array(&ty, size),
                 None => ty,
             };
-            Tree::VarDeclare(ty, name)
+            arena.alloc(Tree::VarDeclare(ty, name))
         });
 
     let stmt_parser = recursive(|stmt| {
@@ -210,12 +211,12 @@ where
                     .collect::<Vec<_>>(),
             )
             .then_ignore(just(Token::RBrace))
-            .map(Tree::Block);
+            .map(|stmts| arena.alloc(Tree::Block(stmts)));
 
         let return_stmt = just(Token::Return)
             .ignore_then(expr_parser.clone())
             .then_ignore(just(Token::Semicolon))
-            .map(|expr| Tree::Return(Box::new(expr)));
+            .map(|expr| arena.alloc(Tree::Return(expr)));
 
         let if_stmt = just(Token::If)
             .ignore_then(just(Token::LParen))
@@ -224,7 +225,7 @@ where
             .then(stmt.clone())
             .then(just(Token::Else).ignore_then(stmt.clone()).or_not())
             .map(|((cond, then), other)| {
-                Tree::If(Box::new(cond), Box::new(then), other.map(Box::new))
+                arena.alloc(Tree::If(cond, then, other.as_deref()))
             });
 
         let while_stmt = just(Token::While)
@@ -232,7 +233,7 @@ where
             .ignore_then(expr_parser.clone())
             .then_ignore(just(Token::RParen))
             .then(stmt.clone())
-            .map(|(cond, body)| Tree::While(Box::new(cond), Box::new(body)));
+            .map(|(cond, body)| arena.alloc(Tree::While(cond, body)));
 
         let for_stmt = just(Token::For)
             .ignore_then(just(Token::LParen))
@@ -245,10 +246,10 @@ where
             .then(stmt.clone())
             .map(|(((init, cond), update), body)| {
                 Tree::For(
-                    init.map(Box::new),
-                    cond.map(Box::new),
-                    update.map(Box::new),
-                    Box::new(body),
+                    init,
+                    cond,
+                    update,
+                    body,
                 )
             });
 
@@ -262,6 +263,7 @@ where
             return_stmt,
             expr_stmt,
         ))
+        .map(|stmt| arena.alloc(stmt))
     });
 
     let param_name = type_parser.clone().then(ident_name);

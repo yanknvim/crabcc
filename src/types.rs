@@ -1,12 +1,12 @@
 #[derive(Debug, Clone, PartialEq)]
-pub enum Type {
+pub enum Type<'a> {
     Int,
     Char,
-    Ptr(Box<Type>),
-    Array(Box<Type>, usize),
+    Ptr(&'a Type<'a>),
+    Array(&'a Type<'a>, usize),
 }
 
-impl Type {
+impl<'a> Type<'a> {
     pub fn size(&self) -> usize {
         match self {
             Self::Int => 4,
