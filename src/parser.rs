@@ -1,3 +1,5 @@
+use std::cell::{Ref, RefCell};
+
 use chumsky::error::Rich;
 use chumsky::prelude::*;
 use chumsky::span::SimpleSpan;
@@ -7,34 +9,81 @@ use crate::error::ParseError;
 use crate::lexer::Token;
 use crate::types::Type;
 
+pub trait Phase {
+    type XBinOp;
+    type XAssign;
+
+    type XFuncDef;
+    type XInteger;
+    type XStringLiteral;
+    type XVar;
+
+    type XAddr;
+    type XDeref;
+    type XCall;
+    type XReturn;
+}
+
+pub struct Parsed;
+pub struct Typed;
+
+impl Phase for Parsed {
+    type XBinOp = ();
+    type XAssign = ();
+
+    type XFuncDef = ();
+    type XInteger = ();
+    type XStringLiteral = ();
+    type XVar = ();
+
+    type XAddr = ();
+    type XDeref = ();
+    type XCall = ();
+    type XReturn = ();
+}
+
+impl Phase for Typed {
+    type XBinOp = Type;
+    type XAssign = Type;
+
+    type XInteger = Type;
+    type XStringLiteral = Type;
+    type XVar = Type;
+
+    type XAddr = Type;
+    type XDeref = Type;
+    type XCall = Type;
+    type XReturn = Type;
+}
+
 #[derive(Debug)]
-pub enum Tree<'a> {
-    Program(Vec<&'a Tree<'a>>),
-    BinOp(Op, &'a Tree<'a>, &'a Tree<'a>),
-    Assign(&'a Tree<'a>, &'a Tree<'a>),
-    Block(Vec<&'a Tree<'a>>),
-    FuncDef(Type, &'a str, Vec<(Type, &'a str)>, &'a Tree<'a>),
-    If(&'a Tree<'a>, &'a Tree<'a>, Option<&'a Tree<'a>>),
-    While(&'a Tree<'a>, &'a Tree<'a>),
+pub enum Tree<'a, P: Phase> {
+    Program(Vec<&'a Tree<'a, P>>),
+    BinOp(Op, &'a Tree<'a, P>, &'a Tree<'a, P>, RefCell<P::XBinOp>),
+    Assign(&'a Tree<'a, P>, &'a Tree<'a, P>, RefCell<P::XAssign>),
+    Block(Vec<&'a Tree<'a, P>>),
+    FuncDef(Type, &'a str, Vec<(Type, &'a str)>, &'a Tree<'a, P>),
+    If(&'a Tree<'a, P>, &'a Tree<'a, P>, Option<&'a Tree<'a, P>>),
+    While(&'a Tree<'a, P>, &'a Tree<'a, P>),
     For(
-        Option<&'a Tree<'a>>,
-        Option<&'a Tree<'a>>,
-        Option<&'a Tree<'a>>,
-        &'a Tree<'a>,
+        Option<&'a Tree<'a, P>>,
+        Option<&'a Tree<'a, P>>,
+        Option<&'a Tree<'a, P>>,
+        &'a Tree<'a, P>,
     ),
 
-    Integer(i64),
-    String(&'a str),
-    Var(&'a str),
-    Indexed(&'a Tree<'a>, &'a Tree<'a>),
+    Integer(i64, RefCell<P::XInteger>),
+    String(&'a str, RefCell<P::XStringLiteral>),
+    Var(&'a str, RefCell<P::XVar>),
+    Indexed(&'a Tree<'a, P>, &'a Tree<'a, P>),
     VarDeclare(Type, &'a str),
-    Addr(&'a Tree<'a>),
-    Deref(&'a Tree<'a>),
+    Addr(&'a Tree<'a>, RefCell<P::XAddr>),
+    Deref(&'a Tree<'a>, RefCell<P::XDeref>),
 
     Sizeof(&'a Tree<'a>),
 
-    Call(&'a str, Vec<&'a Tree<'a>>),
-    Return(&'a Tree<'a>),
+    Call(&'a str, Vec<&'a Tree<'a>>, RefCell<P::XCall>),
+    Return(&'a Tree<'a>, RefCell<P::XReturn>),
 }
 
 #[derive(Debug, Clone)]
