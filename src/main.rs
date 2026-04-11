@@ -1,3 +1,7 @@
+#[cfg(feature = "dhat-heap")]
+#[global_allocator]
+static ALLOC: dhat::Alloc = dhat::Alloc;
+
 mod codegen;
 mod error;
 mod lexer;
@@ -16,6 +20,9 @@ use crate::parser::parse;
 use crate::sema::TypeChecker;
 
 fn main() {
+    #[cfg(feature = "dhat-heap")]
+    let _profiler = dhat::Profiler::new_heap();
+
     let args: Vec<_> = env::args().collect();
 
     if args.len() != 2 {
