@@ -173,8 +173,8 @@ where
     I: Input<'a, Token = Token<'a>, Span = SimpleSpan>,
 {
     let ident_name = select! { Token::Ident(ident) => ident.to_string() };
-    let int_lit = select! { Token::Number(n) => Tree::<Parsed>::Integer(n as i64, ()) };
-    let string_lit = select! { Token::String(s) => Tree::<Parsed>::String(s.to_string(), ()) };
+    let int_lit = select! { Token::Number(n) => Tree::Integer(n as i64, ()) };
+    let string_lit = select! { Token::String(s) => Tree::String(s.to_string(), ()) };
 
     let type_parser = choice((
         just(Token::Int).to(Type::Int),
@@ -201,7 +201,7 @@ where
                     )
                     .then_ignore(just(Token::RParen)),
             )
-            .map(|(name, args)| Tree::<Parsed>::Call(name, args.unwrap_or_default(), ()));
+            .map(|(name, args)| Tree::Call(name, args.unwrap_or_default(), ()));
 
         let array_index = just(Token::LBracket)
             .ignore_then(expr.clone())
@@ -211,14 +211,14 @@ where
             call_expr,
             int_lit,
             string_lit,
-            ident_name.map(|name| Tree::<Parsed>::Var(name, ())),
+            ident_name.map(|name| Tree::Var(name, ())),
             just(Token::LParen)
                 .ignore_then(expr.clone())
                 .then_ignore(just(Token::RParen)),
         ))
         .then(array_index.or_not())
         .map(|(prim, index)| match index {
-            Some(i) => Tree::<Parsed>::Indexed(Box::new(prim), Box::new(i), ()),
+            Some(i) => Tree::Indexed(Box::new(prim), Box::new(i), ()),
             None => prim,
         });
 
@@ -233,19 +233,19 @@ where
             choice((
                 just(Token::Sizeof)
                     .ignore_then(unary.clone())
-                    .map(|expr| Tree::<Parsed>::Sizeof(Box::new(expr))),
+                    .map(|expr| Tree::Sizeof(Box::new(expr))),
                 unary_operator
                     .then(unary.clone())
                     .map(|(op, expr)| match op {
                         UnaryOp::Plus => expr,
-                        UnaryOp::Minus => Tree::<Parsed>::BinOp(
+                        UnaryOp::Minus => Tree::BinOp(
                             Op::Sub,
-                            Box::new(Tree::<Parsed>::Integer(0, ())),
+                            Box::new(Tree::Integer(0, ())),
                             Box::new(expr),
                             (),
                         ),
-                        UnaryOp::Addr => Tree::<Parsed>::Addr(Box::new(expr), ()),
-                        UnaryOp::Deref => Tree::<Parsed>::Deref(Box::new(expr), ()),
+                        UnaryOp::Addr => Tree::Addr(Box::new(expr), ()),
+                        UnaryOp::Deref => Tree::Deref(Box::new(expr), ()),
                     })
                     .or(primary_expr.clone()),
             ))
@@ -270,24 +270,24 @@ where
         let mul_expr = unary_expr
             .clone()
             .foldl(mul_op.then(unary_expr).repeated(), |lhs, (op, rhs)| {
-                Tree::<Parsed>::BinOp(op, Box::new(lhs), Box::new(rhs), ())
+                Tree::BinOp(op, Box::new(lhs), Box::new(rhs), ())
             });
 
         let add_expr = mul_expr
             .clone()
             .foldl(add_op.then(mul_expr).repeated(), |lhs, (op, rhs)| {
-                Tree::<Parsed>::BinOp(op, Box::new(lhs), Box::new(rhs), ())
+                Tree::BinOp(op, Box::new(lhs), Box::new(rhs), ())
             });
 
         let relational_expr = add_expr
             .clone()
             .foldl(relational_op.then(add_expr).repeated(), |lhs, (op, rhs)| {
-                Tree::<Parsed>::BinOp(op, Box::new(lhs), Box::new(rhs), ())
+                Tree::BinOp(op, Box::new(lhs), Box::new(rhs), ())
             });
 
         let equality_expr = relational_expr.clone().foldl(
             equality_op.then(relational_expr).repeated(),
-            |lhs, (op, rhs)| Tree::<Parsed>::BinOp(op, Box::new(lhs), Box::new(rhs), ()),
+            |lhs, (op, rhs)| Tree::BinOp(op, Box::new(lhs), Box::new(rhs), ()),
         );
 
         let assign_rhs = just(Token::Assign).ignore_then(expr.clone());
@@ -296,7 +296,7 @@ where
             .clone()
             .then(assign_rhs.or_not())
             .map(|(lhs, rhs)| match rhs {
-                Some(rhs) => Tree::<Parsed>::Assign(Box::new(lhs), Box::new(rhs), ()),
+                Some(rhs) => Tree::Assign(Box::new(lhs), Box::new(rhs), ()),
                 None => lhs,
             })
     });
@@ -311,7 +311,7 @@ where
                 Some(size) => Type::Array(Box::new(ty), size),
                 None => ty,
             };
-            Tree::<Parsed>::VarDeclare(ty, name)
+            Tree::VarDeclare(ty, name)
         });
 
     let stmt_parser = recursive(|stmt| {
@@ -322,12 +322,12 @@ where
                     .collect::<Vec<_>>(),
             )
             .then_ignore(just(Token::RBrace))
-            .map(Tree::<Parsed>::Block);
+            .map(Tree::Block);
 
         let return_stmt = just(Token::Return)
             .ignore_then(expr_parser.clone())
             .then_ignore(just(Token::Semicolon))
-            .map(|expr| Tree::<Parsed>::Return(Box::new(expr), ()));
+            .map(|expr| Tree::Return(Box::new(expr), ()));
 
         let if_stmt = just(Token::If)
             .ignore_then(just(Token::LParen))
@@ -336,7 +336,7 @@ where
             .then(stmt.clone())
             .then(just(Token::Else).ignore_then(stmt.clone()).or_not())
             .map(|((cond, then), other)| {
-                Tree::<Parsed>::If(Box::new(cond), Box::new(then), other.map(Box::new))
+                Tree::If(Box::new(cond), Box::new(then), other.map(Box::new))
             });
 
         let while_stmt = just(Token::While)
@@ -344,7 +344,7 @@ where
             .ignore_then(expr_parser.clone())
             .then_ignore(just(Token::RParen))
             .then(stmt.clone())
-            .map(|(cond, body)| Tree::<Parsed>::While(Box::new(cond), Box::new(body)));
+            .map(|(cond, body)| Tree::While(Box::new(cond), Box::new(body)));
 
         let for_stmt = just(Token::For)
             .ignore_then(just(Token::LParen))
@@ -356,7 +356,7 @@ where
             .then_ignore(just(Token::RParen))
             .then(stmt.clone())
             .map(|(((init, cond), update), body)| {
-                Tree::<Parsed>::For(
+                Tree::For(
                     init.map(Box::new),
                     cond.map(Box::new),
                     update.map(Box::new),
@@ -397,17 +397,17 @@ where
                         .collect::<Vec<_>>(),
                 )
                 .then_ignore(just(Token::RBrace))
-                .map(Tree::<Parsed>::Block),
+                .map(Tree::Block),
         )
         .map(|(((ty, name), params), body)| {
-            Tree::<Parsed>::FuncDef(ty, name, params.unwrap(), Box::new(body))
+            Tree::FuncDef(ty, name, params.unwrap(), Box::new(body))
         });
 
     choice((func_def, var_decl, stmt_parser))
         .repeated()
         .collect::<Vec<_>>()
         .then_ignore(end())
-        .map(Tree::<Parsed>::Program)
+        .map(Tree::Program)
 }
 
 pub fn parse(source: &str) -> Result<Tree<Parsed>, Vec<ParseError>> {
