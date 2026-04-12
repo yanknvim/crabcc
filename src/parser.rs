@@ -17,13 +17,19 @@ pub trait Phase {
 
     type XAddr;
     type XDeref;
+    type XIndexed;
     type XCall;
     type XReturn;
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Parsed;
+
+#[derive(Clone, Debug)]
 pub struct Typed;
+
+#[derive(Clone, Debug)]
+pub struct Lowered;
 
 impl Phase for Parsed {
     type XBinOp = ();
@@ -35,6 +41,7 @@ impl Phase for Parsed {
 
     type XAddr = ();
     type XDeref = ();
+    type XIndexed = ();
     type XCall = ();
     type XReturn = ();
 }
@@ -49,8 +56,64 @@ impl Phase for Typed {
 
     type XAddr = Type;
     type XDeref = Type;
+    type XIndexed = Type;
     type XCall = Type;
     type XReturn = Type;
+}
+
+impl Phase for Lowered {
+    type XBinOp = Type;
+    type XAssign = Type;
+
+    type XInteger = Type;
+    type XStringLiteral = Type;
+    type XVar = Type;
+
+    type XAddr = Type;
+    type XDeref = Type;
+    type XIndexed = Type;
+    type XCall = Type;
+    type XReturn = Type;
+}
+
+pub trait TypedTree {
+    fn ty(&self) -> &Type;
+}
+
+impl TypedTree for Tree<Typed> {
+    fn ty(&self) -> &Type {
+        match self {
+            Tree::BinOp(_, _, _, ty) => &ty,
+            Tree::Assign(_, _, ty) => &ty,
+            Tree::Integer(_, ty) => &ty,
+            Tree::String(_, ty) => &ty,
+            Tree::Var(_, ty) => &ty,
+            Tree::Addr(_, ty) => &ty,
+            Tree::Deref(_, ty) => &ty,
+            Tree::Indexed(_, _, ty) => &ty,
+            Tree::Call(_, _, ty) => &ty,
+            Tree::Return(_, ty) => &ty,
+            _ => panic!("Not typed"),
+        }
+    }
+}
+
+impl TypedTree for Tree<Lowered> {
+    fn ty(&self) -> &Type {
+        match self {
+            Tree::BinOp(_, _, _, ty) => &ty,
+            Tree::Assign(_, _, ty) => &ty,
+            Tree::Integer(_, ty) => &ty,
+            Tree::String(_, ty) => &ty,
+            Tree::Var(_, ty) => &ty,
+            Tree::Addr(_, ty) => &ty,
+            Tree::Deref(_, ty) => &ty,
+            Tree::Indexed(_, _, ty) => &ty,
+            Tree::Call(_, _, ty) => &ty,
+            Tree::Return(_, ty) => &ty,
+            _ => panic!("Not typed"),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -72,7 +135,7 @@ pub enum Tree<P: Phase> {
     Integer(i64, P::XInteger),
     String(String, P::XStringLiteral),
     Var(String, P::XVar),
-    Indexed(Box<Tree<P>>, Box<Tree<P>>),
+    Indexed(Box<Tree<P>>, Box<Tree<P>>, P::XIndexed),
     VarDeclare(Type, String),
     Addr(Box<Tree<P>>, P::XAddr),
     Deref(Box<Tree<P>>, P::XDeref),
@@ -155,7 +218,7 @@ where
         ))
         .then(array_index.or_not())
         .map(|(prim, index)| match index {
-            Some(i) => Tree::<Parsed>::Indexed(Box::new(prim), Box::new(i)),
+            Some(i) => Tree::<Parsed>::Indexed(Box::new(prim), Box::new(i), ()),
             None => prim,
         });
 
@@ -488,7 +551,7 @@ mod tests {
         match &stmts[0] {
             Tree::Assign(lhs, rhs, _) => {
                 match lhs.as_ref() {
-                    Tree::Indexed(inner, index) => {
+                    Tree::Indexed(inner, index, _) => {
                         assert!(matches!(index.as_ref(), Tree::Integer(1, _)));
                         assert!(matches!(inner.as_ref(), Tree::Var(name, _) if name == "a"));
                     }
