@@ -6,6 +6,9 @@ use logos::Logos;
 #[logos(skip r"[ \t\n\f]+")]
 #[logos(error = String)]
 pub enum Token<'a> {
+    #[regex(r"//.*\n?", logos::skip, allow_greedy = true)]
+    #[regex(r"/\*(?:[^*]|\*[^/])*\*/", logos::skip, allow_greedy = true)]
+
     #[token("int")]
     Int,
     #[token("char")]
