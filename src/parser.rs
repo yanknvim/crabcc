@@ -83,16 +83,16 @@ pub trait TypedTree {
 impl TypedTree for Tree<Typed> {
     fn ty(&self) -> &Type {
         match self {
-            Tree::BinOp(_, _, _, ty) => &ty,
-            Tree::Assign(_, _, ty) => &ty,
-            Tree::Integer(_, ty) => &ty,
-            Tree::String(_, ty) => &ty,
-            Tree::Var(_, ty) => &ty,
-            Tree::Addr(_, ty) => &ty,
-            Tree::Deref(_, ty) => &ty,
-            Tree::Indexed(_, _, ty) => &ty,
-            Tree::Call(_, _, ty) => &ty,
-            Tree::Return(_, ty) => &ty,
+            Tree::BinOp(_, _, _, ty) => ty,
+            Tree::Assign(_, _, ty) => ty,
+            Tree::Integer(_, ty) => ty,
+            Tree::String(_, ty) => ty,
+            Tree::Var(_, ty) => ty,
+            Tree::Addr(_, ty) => ty,
+            Tree::Deref(_, ty) => ty,
+            Tree::Indexed(_, _, ty) => ty,
+            Tree::Call(_, _, ty) => ty,
+            Tree::Return(_, ty) => ty,
             _ => panic!("Not typed"),
         }
     }
@@ -101,16 +101,16 @@ impl TypedTree for Tree<Typed> {
 impl TypedTree for Tree<Lowered> {
     fn ty(&self) -> &Type {
         match self {
-            Tree::BinOp(_, _, _, ty) => &ty,
-            Tree::Assign(_, _, ty) => &ty,
-            Tree::Integer(_, ty) => &ty,
-            Tree::String(_, ty) => &ty,
-            Tree::Var(_, ty) => &ty,
-            Tree::Addr(_, ty) => &ty,
-            Tree::Deref(_, ty) => &ty,
-            Tree::Indexed(_, _, ty) => &ty,
-            Tree::Call(_, _, ty) => &ty,
-            Tree::Return(_, ty) => &ty,
+            Tree::BinOp(_, _, _, ty) => ty,
+            Tree::Assign(_, _, ty) => ty,
+            Tree::Integer(_, ty) => ty,
+            Tree::String(_, ty) => ty,
+            Tree::Var(_, ty) => ty,
+            Tree::Addr(_, ty) => ty,
+            Tree::Deref(_, ty) => ty,
+            Tree::Indexed(_, _, ty) => ty,
+            Tree::Call(_, _, ty) => ty,
+            Tree::Return(_, ty) => ty,
             _ => panic!("Not typed"),
         }
     }
@@ -434,7 +434,7 @@ pub fn parse(source: &str) -> Result<Tree<Parsed>, Vec<ParseError>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse, Op, Parsed, Tree};
+    use super::{Op, Parsed, Tree, parse};
     use crate::types::Type;
 
     fn parse_one(source: &str) -> Tree<Parsed> {
@@ -533,7 +533,7 @@ mod tests {
 
         match &stmts[0] {
             Tree::Return(expr, _) => match expr.as_ref() {
-                Tree::Indexed(inner, index) => {
+                Tree::Indexed(inner, index, _) => {
                     assert!(matches!(index.as_ref(), Tree::Integer(3, _)));
                     assert!(matches!(inner.as_ref(), Tree::Var(name, _) if name == "a"));
                 }

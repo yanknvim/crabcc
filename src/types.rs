@@ -1,5 +1,5 @@
+use crate::parser::{Op, Parsed, Tree, Typed, TypedTree};
 use std::collections::HashMap;
-use crate::parser::{Tree, Parsed, Typed, TypedTree, Op};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
@@ -62,7 +62,7 @@ impl TypeChecker {
 
         self.functions.clear();
         for tree in trees {
-            if let Tree::FuncDef(ty, name, params, body) = tree {
+            if let Tree::FuncDef(ty, name, params, _body) = tree {
                 if self.functions.contains_key(name) {
                     panic!("double declaration of function: {}", name);
                 }
@@ -153,7 +153,7 @@ impl TypeChecker {
             Tree::Sizeof(expr) => {
                 let size = match &**expr {
                     Tree::Var(name, _) => self
-                        .lookup(&name)
+                        .lookup(name)
                         .unwrap_or_else(|| panic!("not declared variable: {}", name))
                         .size(),
                     _ => {
@@ -237,7 +237,7 @@ impl TypeChecker {
             }
             Tree::Var(name, _) => {
                 let ty = self
-                    .lookup(&name)
+                    .lookup(name)
                     .unwrap_or_else(|| panic!("not declared variable: {}", name));
                 match ty.clone() {
                     Type::Array(inner, _) => Tree::Addr(
@@ -248,12 +248,13 @@ impl TypeChecker {
                 }
             }
             Tree::Indexed(lhs, rhs, _) => {
+                // a[b] -> *(a + b)
                 let lhs = self.check_tree(lhs);
                 let rhs = self.check_tree(rhs);
 
                 let binop = self.check_binop(&Op::Add, lhs.clone(), rhs.clone());
-                match binop.ty() {
-                    Type::Ptr(inner) => Tree::Indexed(Box::new(lhs), Box::new(rhs), binop.ty.clone()),
+                match binop.ty().clone() {
+                    Type::Ptr(inner) => Tree::Deref(Box::new(binop), *inner),
                     _ => panic!("index access for not pointer"),
                 }
             }
@@ -352,27 +353,27 @@ impl TypeChecker {
 
 #[cfg(test)]
 mod tests {
-    use super::{TypeChecker};
-    use crate::parser::{Op, parse};
+    use super::TypeChecker;
+    use crate::parser::{Op, Tree, Typed, parse};
     use crate::types::Type;
 
-    fn typecheck(source: &str) -> TypedTree {
+    fn typecheck(source: &str) -> Tree<Typed> {
         let tree = parse(source).unwrap();
-        let mut checker = TypeChecker::new(tree);
-        checker.check()
+        let mut checker = TypeChecker::new();
+        checker.check(&tree)
     }
 
-    fn typed_program(source: &str) -> Vec<TypedTree> {
+    fn typed_program(source: &str) -> Vec<Tree<Typed>> {
         match typecheck(source) {
-            TypedTree::Program(trees) => trees,
+            Tree::Program(trees) => trees,
             _ => panic!("top-level tree must be Program"),
         }
     }
 
-    fn find_func<'a>(trees: &'a [TypedTree], name: &str) -> &'a TypedTree {
+    fn find_func<'a>(trees: &'a [Tree<Typed>], name: &str) -> &'a Tree<Typed> {
         trees
             .iter()
-            .find(|tree| matches!(tree, TypedTree::FuncDef(_, n, _, _) if n == name))
+            .find(|tree| matches!(tree, Tree::FuncDef(_, n, _, _) if n == name))
             .unwrap_or_else(|| panic!("function {} not found", name))
     }
 
@@ -382,12 +383,12 @@ mod tests {
         let func = find_func(&trees, "main");
 
         match func {
-            TypedTree::FuncDef(_, _, _, body) => match &**body {
-                TypedTree::Block(stmts) => match &stmts[0] {
-                    TypedTree::Return(expr, ret_ty) => {
+            Tree::FuncDef(_, _, _, body) => match &**body {
+                Tree::Block(stmts) => match &stmts[0] {
+                    Tree::Return(expr, ret_ty) => {
                         assert_eq!(ret_ty, &Type::Int);
                         match &**expr {
-                            TypedTree::BinOp(Op::Add, _, _, ty) => {
+                            Tree::BinOp(Op::Add, _, _, ty) => {
                                 assert_eq!(ty, &Type::Int);
                             }
                             _ => panic!("expected add expression"),
@@ -407,17 +408,17 @@ mod tests {
         let func = find_func(&trees, "main");
 
         match func {
-            TypedTree::FuncDef(_, _, _, body) => match &**body {
-                TypedTree::Block(stmts) => match &stmts[1] {
-                    TypedTree::Return(expr, ret_ty) => {
+            Tree::FuncDef(_, _, _, body) => match &**body {
+                Tree::Block(stmts) => match &stmts[1] {
+                    Tree::Return(expr, ret_ty) => {
                         assert_eq!(ret_ty, &Type::Int);
                         match &**expr {
-                            TypedTree::Deref(inner, ty) => {
+                            Tree::Deref(inner, ty) => {
                                 assert_eq!(ty, &Type::Int);
                                 match &**inner {
-                                    TypedTree::Addr(target, addr_ty) => {
+                                    Tree::Addr(target, addr_ty) => {
                                         assert_eq!(addr_ty, &Type::Ptr(Box::new(Type::Int)));
-                                        assert!(matches!(**target, TypedTree::Var(_, _)));
+                                        assert!(matches!(**target, Tree::Var(_, _)));
                                     }
                                     _ => panic!("expected addr"),
                                 }
@@ -439,12 +440,12 @@ mod tests {
         let func = find_func(&trees, "main");
 
         match func {
-            TypedTree::FuncDef(_, _, _, body) => match &**body {
-                TypedTree::Block(stmts) => match &stmts[1] {
-                    TypedTree::Return(expr, ret_ty) => {
+            Tree::FuncDef(_, _, _, body) => match &**body {
+                Tree::Block(stmts) => match &stmts[1] {
+                    Tree::Return(expr, ret_ty) => {
                         assert_eq!(ret_ty, &Type::Ptr(Box::new(Type::Int)));
                         match &**expr {
-                            TypedTree::BinOp(Op::Add, _, _, ty) => {
+                            Tree::BinOp(Op::Add, _, _, ty) => {
                                 assert_eq!(ty, &Type::Ptr(Box::new(Type::Int)));
                             }
                             _ => panic!("expected add expression"),
@@ -465,12 +466,12 @@ mod tests {
         let func = find_func(&trees, "main");
 
         match func {
-            TypedTree::FuncDef(_, _, _, body) => match &**body {
-                TypedTree::Block(stmts) => match &stmts[1] {
-                    TypedTree::Return(expr, ret_ty) => {
+            Tree::FuncDef(_, _, _, body) => match &**body {
+                Tree::Block(stmts) => match &stmts[1] {
+                    Tree::Return(expr, ret_ty) => {
                         assert_eq!(ret_ty, &Type::Int);
                         match &**expr {
-                            TypedTree::Call(name, args, call_ty) => {
+                            Tree::Call(name, args, call_ty) => {
                                 assert_eq!(name, "foo");
                                 assert_eq!(args.len(), 1);
                                 assert_eq!(call_ty, &Type::Int);
@@ -498,11 +499,11 @@ mod tests {
         let func = find_func(&trees, "main");
 
         match func {
-            TypedTree::FuncDef(_, _, _, body) => match &**body {
-                TypedTree::Block(stmts) => match &stmts[1] {
-                    TypedTree::Return(expr, ret_ty) => {
+            Tree::FuncDef(_, _, _, body) => match &**body {
+                Tree::Block(stmts) => match &stmts[1] {
+                    Tree::Return(expr, ret_ty) => {
                         assert_eq!(ret_ty, &Type::Int);
-                        assert!(matches!(**expr, TypedTree::Integer(8, Type::Int)));
+                        assert!(matches!(**expr, Tree::Integer(8, Type::Int)));
                     }
                     _ => panic!("expected return"),
                 },
@@ -518,15 +519,15 @@ mod tests {
         let func = find_func(&trees, "main");
 
         match func {
-            TypedTree::FuncDef(_, _, _, body) => match &**body {
-                TypedTree::Block(stmts) => match &stmts[1] {
-                    TypedTree::Return(expr, ret_ty) => {
+            Tree::FuncDef(_, _, _, body) => match &**body {
+                Tree::Block(stmts) => match &stmts[1] {
+                    Tree::Return(expr, ret_ty) => {
                         assert_eq!(ret_ty, &Type::Ptr(Box::new(Type::Int)));
                         match &**expr {
-                            TypedTree::Addr(inner, addr_ty) => {
+                            Tree::Addr(inner, addr_ty) => {
                                 assert_eq!(addr_ty, &Type::Ptr(Box::new(Type::Int)));
                                 assert!(
-                                    matches!(**inner, TypedTree::Var(ref name, Type::Int) if name == "a")
+                                    matches!(**inner, Tree::Var(ref name, Type::Int) if name == "a")
                                 );
                             }
                             _ => panic!("expected addr from array-to-pointer decay"),
@@ -546,28 +547,23 @@ mod tests {
         let func = find_func(&trees, "main");
 
         match func {
-            TypedTree::FuncDef(_, _, _, body) => match &**body {
-                TypedTree::Block(stmts) => {
+            Tree::FuncDef(_, _, _, body) => match &**body {
+                Tree::Block(stmts) => {
                     match &stmts[2] {
-                        TypedTree::Assign(lhs, rhs, ty) => {
+                        Tree::Assign(lhs, rhs, ty) => {
                             assert_eq!(ty, &Type::Int);
-                            assert!(
-                                matches!(**rhs, TypedTree::Var(ref name, Type::Int) if name == "v")
-                            );
+                            assert!(matches!(**rhs, Tree::Var(ref name, Type::Int) if name == "v"));
                             match &**lhs {
-                                TypedTree::Deref(indexed, lhs_ty) => {
+                                Tree::Deref(indexed, lhs_ty) => {
                                     assert_eq!(lhs_ty, &Type::Int);
                                     match &**indexed {
-                                        TypedTree::BinOp(Op::Add, base, index, ptr_ty) => {
-                                            assert!(matches!(
-                                                **index,
-                                                TypedTree::Integer(2, Type::Int)
-                                            ));
+                                        Tree::BinOp(Op::Add, base, index, ptr_ty) => {
+                                            assert!(matches!(**index, Tree::Integer(2, Type::Int)));
                                             assert_eq!(ptr_ty, &Type::Ptr(Box::new(Type::Int)));
                                             assert!(matches!(
                                                 **base,
-                                                TypedTree::Var(ref name, Type::Ptr(ref inner))
-                                                    if name == "a" && **inner == Type::Int
+                                                    Tree::Var(ref name, Type::Ptr(ref inner))
+                                                        if name == "a" && **inner == Type::Int
                                             ));
                                         }
                                         _ => panic!("expected pointer add for index"),
@@ -580,9 +576,9 @@ mod tests {
                     }
 
                     match &stmts[3] {
-                        TypedTree::Return(expr, ret_ty) => {
+                        Tree::Return(expr, ret_ty) => {
                             assert_eq!(ret_ty, &Type::Int);
-                            assert!(matches!(**expr, TypedTree::Deref(_, Type::Int)));
+                            assert!(matches!(**expr, Tree::Deref(_, Type::Int)));
                         }
                         _ => panic!("expected return"),
                     }
@@ -599,11 +595,11 @@ mod tests {
         let func = find_func(&trees, "main");
 
         match func {
-            TypedTree::FuncDef(_, _, _, body) => match &**body {
-                TypedTree::Block(stmts) => match &stmts[1] {
-                    TypedTree::Return(expr, ret_ty) => {
+            Tree::FuncDef(_, _, _, body) => match &**body {
+                Tree::Block(stmts) => match &stmts[1] {
+                    Tree::Return(expr, ret_ty) => {
                         assert_eq!(ret_ty, &Type::Int);
-                        assert!(matches!(**expr, TypedTree::Integer(16, Type::Int)));
+                        assert!(matches!(**expr, Tree::Integer(16, Type::Int)));
                     }
                     _ => panic!("expected return"),
                 },
@@ -616,19 +612,19 @@ mod tests {
     #[test]
     fn globals_are_collected() {
         let tree = parse("int g; int main(){ return 1; }").unwrap();
-        let mut checker = TypeChecker::new(tree);
-        let typed = checker.check();
+        let mut checker = TypeChecker::new();
+        let typed = checker.check(&tree);
         let globals = checker.globals();
         assert!(globals.contains_key("g"));
         assert_eq!(globals.get("g"), Some(&Type::Int));
 
         match typed {
-            TypedTree::Program(trees) => {
+            Tree::Program(trees) => {
                 // only one function definition should be present
                 assert!(
                     trees
                         .iter()
-                        .any(|t| matches!(t, TypedTree::FuncDef(_, n, _, _) if n == "main"))
+                        .any(|t| matches!(t, Tree::FuncDef(_, n, _, _) if n == "main"))
                 );
             }
             _ => panic!("expected program"),
@@ -639,7 +635,7 @@ mod tests {
     #[should_panic(expected = "duplicate of global var")]
     fn duplicate_global_decl_panics() {
         let tree = parse("int g; int g; int main(){ return 0; }").unwrap();
-        let mut checker = TypeChecker::new(tree);
-        let _ = checker.check();
+        let mut checker = TypeChecker::new();
+        let _ = checker.check(&tree);
     }
 }

@@ -6,13 +6,9 @@ edition = "2024"
 [profile.release]
 debug = true
 
-[features]
-dhat-heap = []
-
 [dependencies]
 anyhow = "1.0.102"
 thiserror = "2.0.18"
 chumsky = "0.12.0"
 logos = "0.16.1"
 ariadne = "0.4.1"
-dhat = "0.3.3"

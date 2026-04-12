@@ -1,7 +1,3 @@
-#[cfg(feature = "dhat-heap")]
-#[global_allocator]
-static ALLOC: dhat::Alloc = dhat::Alloc;
-
 mod codegen;
 mod error;
 mod lexer;
@@ -17,12 +13,9 @@ use ariadne::{Color, Label, Report, ReportKind, Source};
 
 use crate::codegen::Codegen;
 use crate::parser::parse;
-use crate::sema::TypeChecker;
+use crate::types::TypeChecker;
 
 fn main() {
-    #[cfg(feature = "dhat-heap")]
-    let _profiler = dhat::Profiler::new_heap();
-
     let args: Vec<_> = env::args().collect();
 
     if args.len() != 2 {
@@ -50,13 +43,13 @@ fn main() {
             std::process::exit(1);
         }
     };
-    let mut checker = TypeChecker::new(tree);
-    let typed_tree = checker.check();
+    let mut checker = TypeChecker::new();
+    let typed_tree = checker.check(&tree);
+    let lowered_tree = sema::lower(typed_tree);
     let mut codegen = Codegen::new(
-        typed_tree,
         checker.globals().clone(),
         checker.strings().clone(),
         stdout(),
     );
-    codegen.generate().unwrap();
+    codegen.generate(&lowered_tree).unwrap();
 }

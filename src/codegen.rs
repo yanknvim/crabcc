@@ -1,4 +1,4 @@
-use crate::parser::{Tree, Lowered, Op};
+use crate::parser::{Lowered, Op, Tree, TypedTree};
 use crate::types::{Env, Type};
 use std::collections::HashMap;
 use std::io::{self, Write};
@@ -114,7 +114,7 @@ impl<W: Write> Codegen<W> {
                     Self::collect_locals(arg, locals);
                 }
             }
-            _ => {},
+            _ => {}
         }
     }
 
@@ -161,7 +161,7 @@ impl<W: Write> Codegen<W> {
         }
 
         for tree in trees {
-            self.gen_func(&tree)?;
+            self.gen_func(tree)?;
         }
 
         Ok(())
