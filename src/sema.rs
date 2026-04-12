@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::parser::{Op, Tree};
+use crate::parser::{Op, Tree, Parsed};
 use crate::types::Type;
 
 #[derive(Debug, Clone)]
@@ -50,7 +50,7 @@ impl TypedTree {
 pub type Env = HashMap<String, Type>;
 
 pub struct TypeChecker {
-    tree: Tree,
+    tree: Tree<Parsed>,
     env: Vec<Env>,
     functions: HashMap<String, (Type, Vec<Type>)>,
     strings: HashMap<String, String>,
@@ -59,7 +59,7 @@ pub struct TypeChecker {
 }
 
 impl TypeChecker {
-    pub fn new(tree: Tree) -> Self {
+    pub fn new(tree: Tree<Parsed>) -> Self {
         Self {
             tree,
             env: Vec::new(),
@@ -92,7 +92,7 @@ impl TypeChecker {
 
         self.functions.clear();
         for tree in trees {
-            if let Tree::FuncDef(ty, name, params, _) = tree {
+            if let Tree::FuncDef(ty, name, params, body) = tree {
                 if self.functions.contains_key(name) {
                     panic!("double declaration of function: {}", name);
                 }
@@ -136,7 +136,7 @@ impl TypeChecker {
         }
     }
 
-    fn check_program(&mut self, tree: &Tree) -> TypedTree {
+    fn check_program(&mut self, tree: &Tree<Parsed>) -> TypedTree {
         if let Tree::Program(trees) = tree {
             TypedTree::Program(
                 trees
@@ -178,12 +178,12 @@ impl TypeChecker {
         }
     }
 
-    fn check_tree(&mut self, tree: &Tree) -> TypedTree {
+    fn check_tree(&mut self, tree: &Tree<Parsed>) -> TypedTree {
         match tree {
             Tree::Sizeof(expr) => {
                 let size = match &**expr {
-                    Tree::Var(name) => self
-                        .lookup(name)
+                    Tree::Var(name, _) => self
+                        .lookup(&name)
                         .unwrap_or_else(|| panic!("not declared variable: {}", name))
                         .size(),
                     _ => {
@@ -193,13 +193,13 @@ impl TypeChecker {
                 };
                 TypedTree::Integer(size as i64, Type::Int)
             }
-            Tree::BinOp(op, lhs, rhs) => {
+            Tree::BinOp(op, lhs, rhs, _) => {
                 let lhs = self.check_tree(lhs);
                 let rhs = self.check_tree(rhs);
 
                 self.check_binop(op, lhs, rhs)
             }
-            Tree::Assign(lhs, rhs) => {
+            Tree::Assign(lhs, rhs, _) => {
                 let lhs = self.check_tree(lhs);
                 let rhs = self.check_tree(rhs);
                 let ty = lhs.ty();
@@ -260,14 +260,14 @@ impl TypeChecker {
                     Box::new(body),
                 )
             }
-            Tree::Integer(n) => TypedTree::Integer(*n, Type::Int),
-            Tree::String(s) => {
+            Tree::Integer(n, _) => TypedTree::Integer(*n, Type::Int),
+            Tree::String(s, _) => {
                 let label = self.add_string_literal(s);
                 TypedTree::StringLiteral(label, Type::Ptr(Box::new(Type::Char)))
             }
-            Tree::Var(name) => {
+            Tree::Var(name, _) => {
                 let ty = self
-                    .lookup(name)
+                    .lookup(&name)
                     .unwrap_or_else(|| panic!("not declared variable: {}", name));
                 match ty.clone() {
                     Type::Array(inner, _) => TypedTree::Addr(
@@ -292,20 +292,20 @@ impl TypeChecker {
                 self.declare(name.to_string(), ty.clone());
                 TypedTree::VarDeclare(ty.clone(), name.to_string())
             }
-            Tree::Addr(expr) => {
+            Tree::Addr(expr, _) => {
                 let expr = self.check_tree(expr);
                 Self::check_lvalue(&expr);
                 let expr_ty = expr.ty().clone();
                 TypedTree::Addr(Box::new(expr), Type::Ptr(Box::new(expr_ty)))
             }
-            Tree::Deref(expr) => {
+            Tree::Deref(expr, _) => {
                 let expr = self.check_tree(expr);
                 match expr.ty().clone() {
                     Type::Ptr(inner) => TypedTree::Deref(Box::new(expr), *inner),
                     _ => panic!("{:?} is not ptr", expr.ty()),
                 }
             }
-            Tree::Call(name, args) => {
+            Tree::Call(name, args, _) => {
                 let (ret_ty, params) = self
                     .functions
                     .get(name)
@@ -322,7 +322,7 @@ impl TypeChecker {
                 }
                 TypedTree::Call(name.to_string(), checked_args, ret_ty)
             }
-            Tree::Return(expr) => {
+            Tree::Return(expr, _) => {
                 let expr = self.check_tree(expr);
                 self.current_return
                     .as_ref()

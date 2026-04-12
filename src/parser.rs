@@ -7,34 +7,80 @@ use crate::error::ParseError;
 use crate::lexer::Token;
 use crate::types::Type;
 
+pub trait Phase {
+    type XBinOp;
+    type XAssign;
+
+    type XInteger;
+    type XStringLiteral;
+    type XVar;
+
+    type XAddr;
+    type XDeref;
+    type XCall;
+    type XReturn;
+}
+
+#[derive(Clone)]
+pub struct Parsed;
+pub struct Typed;
+
+impl Phase for Parsed {
+    type XBinOp = ();
+    type XAssign = ();
+
+    type XInteger = ();
+    type XStringLiteral = ();
+    type XVar = ();
+
+    type XAddr = ();
+    type XDeref = ();
+    type XCall = ();
+    type XReturn = ();
+}
+
+impl Phase for Typed {
+    type XBinOp = Type;
+    type XAssign = Type;
+
+    type XInteger = Type;
+    type XStringLiteral = Type;
+    type XVar = Type;
+
+    type XAddr = Type;
+    type XDeref = Type;
+    type XCall = Type;
+    type XReturn = Type;
+}
+
 #[derive(Debug, Clone)]
-pub enum Tree {
-    Program(Vec<Tree>),
-    BinOp(Op, Box<Tree>, Box<Tree>),
-    Assign(Box<Tree>, Box<Tree>),
-    Block(Vec<Tree>),
-    FuncDef(Type, String, Vec<(Type, String)>, Box<Tree>),
-    If(Box<Tree>, Box<Tree>, Option<Box<Tree>>),
-    While(Box<Tree>, Box<Tree>),
+pub enum Tree<P: Phase> {
+    Program(Vec<Tree<P>>),
+    BinOp(Op, Box<Tree<P>>, Box<Tree<P>>, P::XBinOp),
+    Assign(Box<Tree<P>>, Box<Tree<P>>, P::XAssign),
+    Block(Vec<Tree<P>>),
+    FuncDef(Type, String, Vec<(Type, String)>, Box<Tree<P>>),
+    If(Box<Tree<P>>, Box<Tree<P>>, Option<Box<Tree<P>>>),
+    While(Box<Tree<P>>, Box<Tree<P>>),
     For(
-        Option<Box<Tree>>,
-        Option<Box<Tree>>,
-        Option<Box<Tree>>,
-        Box<Tree>,
+        Option<Box<Tree<P>>>,
+        Option<Box<Tree<P>>>,
+        Option<Box<Tree<P>>>,
+        Box<Tree<P>>,
     ),
 
-    Integer(i64),
-    String(String),
-    Var(String),
-    Indexed(Box<Tree>, Box<Tree>),
+    Integer(i64, P::XInteger),
+    String(String, P::XStringLiteral),
+    Var(String, P::XVar),
+    Indexed(Box<Tree<P>>, Box<Tree<P>>),
     VarDeclare(Type, String),
-    Addr(Box<Tree>),
-    Deref(Box<Tree>),
+    Addr(Box<Tree<P>>, P::XAddr),
+    Deref(Box<Tree<P>>, P::XDeref),
 
-    Sizeof(Box<Tree>),
+    Sizeof(Box<Tree<P>>),
 
-    Call(String, Vec<Tree>),
-    Return(Box<Tree>),
+    Call(String, Vec<Tree<P>>, P::XCall),
+    Return(Box<Tree<P>>, P::XReturn),
 }
 
 #[derive(Debug, Clone)]
@@ -59,13 +105,13 @@ enum UnaryOp {
     Deref,
 }
 
-fn parser<'a, I>() -> impl Parser<'a, I, Tree, extra::Err<Rich<'a, Token<'a>, SimpleSpan>>>
+fn parser<'a, I>() -> impl Parser<'a, I, Tree<Parsed>, extra::Err<Rich<'a, Token<'a>, SimpleSpan>>>
 where
     I: Input<'a, Token = Token<'a>, Span = SimpleSpan>,
 {
     let ident_name = select! { Token::Ident(ident) => ident.to_string() };
-    let int_lit = select! { Token::Number(n) => Tree::Integer(n as i64) };
-    let string_lit = select! { Token::String(s) => Tree::String(s.to_string()) };
+    let int_lit = select! { Token::Number(n) => Tree::<Parsed>::Integer(n as i64, ()) };
+    let string_lit = select! { Token::String(s) => Tree::<Parsed>::String(s.to_string(), ()) };
 
     let type_parser = choice((
         just(Token::Int).to(Type::Int),
@@ -92,7 +138,7 @@ where
                     )
                     .then_ignore(just(Token::RParen)),
             )
-            .map(|(name, args)| Tree::Call(name, args.unwrap_or_default()));
+            .map(|(name, args)| Tree::<Parsed>::Call(name, args.unwrap_or_default(), ()));
 
         let array_index = just(Token::LBracket)
             .ignore_then(expr.clone())
@@ -102,14 +148,14 @@ where
             call_expr,
             int_lit,
             string_lit,
-            ident_name.map(Tree::Var),
+            ident_name.map(|name| Tree::<Parsed>::Var(name, ())),
             just(Token::LParen)
                 .ignore_then(expr.clone())
                 .then_ignore(just(Token::RParen)),
         ))
         .then(array_index.or_not())
         .map(|(prim, index)| match index {
-            Some(i) => Tree::Indexed(Box::new(prim), Box::new(i)),
+            Some(i) => Tree::<Parsed>::Indexed(Box::new(prim), Box::new(i)),
             None => prim,
         });
 
@@ -124,16 +170,19 @@ where
             choice((
                 just(Token::Sizeof)
                     .ignore_then(unary.clone())
-                    .map(|expr| Tree::Sizeof(Box::new(expr))),
+                    .map(|expr| Tree::<Parsed>::Sizeof(Box::new(expr))),
                 unary_operator
                     .then(unary.clone())
                     .map(|(op, expr)| match op {
                         UnaryOp::Plus => expr,
-                        UnaryOp::Minus => {
-                            Tree::BinOp(Op::Sub, Box::new(Tree::Integer(0)), Box::new(expr))
-                        }
-                        UnaryOp::Addr => Tree::Addr(Box::new(expr)),
-                        UnaryOp::Deref => Tree::Deref(Box::new(expr)),
+                        UnaryOp::Minus => Tree::<Parsed>::BinOp(
+                            Op::Sub,
+                            Box::new(Tree::<Parsed>::Integer(0, ())),
+                            Box::new(expr),
+                            (),
+                        ),
+                        UnaryOp::Addr => Tree::<Parsed>::Addr(Box::new(expr), ()),
+                        UnaryOp::Deref => Tree::<Parsed>::Deref(Box::new(expr), ()),
                     })
                     .or(primary_expr.clone()),
             ))
@@ -158,24 +207,24 @@ where
         let mul_expr = unary_expr
             .clone()
             .foldl(mul_op.then(unary_expr).repeated(), |lhs, (op, rhs)| {
-                Tree::BinOp(op, Box::new(lhs), Box::new(rhs))
+                Tree::<Parsed>::BinOp(op, Box::new(lhs), Box::new(rhs), ())
             });
 
         let add_expr = mul_expr
             .clone()
             .foldl(add_op.then(mul_expr).repeated(), |lhs, (op, rhs)| {
-                Tree::BinOp(op, Box::new(lhs), Box::new(rhs))
+                Tree::<Parsed>::BinOp(op, Box::new(lhs), Box::new(rhs), ())
             });
 
         let relational_expr = add_expr
             .clone()
             .foldl(relational_op.then(add_expr).repeated(), |lhs, (op, rhs)| {
-                Tree::BinOp(op, Box::new(lhs), Box::new(rhs))
+                Tree::<Parsed>::BinOp(op, Box::new(lhs), Box::new(rhs), ())
             });
 
         let equality_expr = relational_expr.clone().foldl(
             equality_op.then(relational_expr).repeated(),
-            |lhs, (op, rhs)| Tree::BinOp(op, Box::new(lhs), Box::new(rhs)),
+            |lhs, (op, rhs)| Tree::<Parsed>::BinOp(op, Box::new(lhs), Box::new(rhs), ()),
         );
 
         let assign_rhs = just(Token::Assign).ignore_then(expr.clone());
@@ -184,7 +233,7 @@ where
             .clone()
             .then(assign_rhs.or_not())
             .map(|(lhs, rhs)| match rhs {
-                Some(rhs) => Tree::Assign(Box::new(lhs), Box::new(rhs)),
+                Some(rhs) => Tree::<Parsed>::Assign(Box::new(lhs), Box::new(rhs), ()),
                 None => lhs,
             })
     });
@@ -199,7 +248,7 @@ where
                 Some(size) => Type::Array(Box::new(ty), size),
                 None => ty,
             };
-            Tree::VarDeclare(ty, name)
+            Tree::<Parsed>::VarDeclare(ty, name)
         });
 
     let stmt_parser = recursive(|stmt| {
@@ -210,12 +259,12 @@ where
                     .collect::<Vec<_>>(),
             )
             .then_ignore(just(Token::RBrace))
-            .map(Tree::Block);
+            .map(Tree::<Parsed>::Block);
 
         let return_stmt = just(Token::Return)
             .ignore_then(expr_parser.clone())
             .then_ignore(just(Token::Semicolon))
-            .map(|expr| Tree::Return(Box::new(expr)));
+            .map(|expr| Tree::<Parsed>::Return(Box::new(expr), ()));
 
         let if_stmt = just(Token::If)
             .ignore_then(just(Token::LParen))
@@ -224,7 +273,7 @@ where
             .then(stmt.clone())
             .then(just(Token::Else).ignore_then(stmt.clone()).or_not())
             .map(|((cond, then), other)| {
-                Tree::If(Box::new(cond), Box::new(then), other.map(Box::new))
+                Tree::<Parsed>::If(Box::new(cond), Box::new(then), other.map(Box::new))
             });
 
         let while_stmt = just(Token::While)
@@ -232,7 +281,7 @@ where
             .ignore_then(expr_parser.clone())
             .then_ignore(just(Token::RParen))
             .then(stmt.clone())
-            .map(|(cond, body)| Tree::While(Box::new(cond), Box::new(body)));
+            .map(|(cond, body)| Tree::<Parsed>::While(Box::new(cond), Box::new(body)));
 
         let for_stmt = just(Token::For)
             .ignore_then(just(Token::LParen))
@@ -244,7 +293,7 @@ where
             .then_ignore(just(Token::RParen))
             .then(stmt.clone())
             .map(|(((init, cond), update), body)| {
-                Tree::For(
+                Tree::<Parsed>::For(
                     init.map(Box::new),
                     cond.map(Box::new),
                     update.map(Box::new),
@@ -285,20 +334,20 @@ where
                         .collect::<Vec<_>>(),
                 )
                 .then_ignore(just(Token::RBrace))
-                .map(Tree::Block),
+                .map(Tree::<Parsed>::Block),
         )
         .map(|(((ty, name), params), body)| {
-            Tree::FuncDef(ty, name, params.unwrap(), Box::new(body))
+            Tree::<Parsed>::FuncDef(ty, name, params.unwrap(), Box::new(body))
         });
 
     choice((func_def, var_decl, stmt_parser))
         .repeated()
         .collect::<Vec<_>>()
         .then_ignore(end())
-        .map(Tree::Program)
+        .map(Tree::<Parsed>::Program)
 }
 
-pub fn parse(source: &str) -> Result<Tree, Vec<ParseError>> {
+pub fn parse(source: &str) -> Result<Tree<Parsed>, Vec<ParseError>> {
     let lexer = Token::lexer(source);
     let tokens: Vec<(Token<'_>, SimpleSpan)> = lexer
         .spanned()
@@ -322,10 +371,10 @@ pub fn parse(source: &str) -> Result<Tree, Vec<ParseError>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Op, Tree, parse};
+    use super::{parse, Op, Parsed, Tree};
     use crate::types::Type;
 
-    fn parse_one(source: &str) -> Tree {
+    fn parse_one(source: &str) -> Tree<Parsed> {
         match parse(source).unwrap() {
             Tree::Program(trees) => {
                 assert_eq!(trees.len(), 1, "expected one top-level item");
@@ -335,14 +384,14 @@ mod tests {
         }
     }
 
-    fn parse_func(source: &str) -> (Type, String, Vec<(Type, String)>, Tree) {
+    fn parse_func(source: &str) -> (Type, String, Vec<(Type, String)>, Tree<Parsed>) {
         match parse_one(source) {
             Tree::FuncDef(ty, name, params, body) => (ty, name, params, *body),
             _ => panic!("expected function definition"),
         }
     }
 
-    fn expect_block(tree: &Tree) -> &Vec<Tree> {
+    fn expect_block(tree: &Tree<Parsed>) -> &Vec<Tree<Parsed>> {
         match tree {
             Tree::Block(stmts) => stmts,
             _ => panic!("expected block body"),
@@ -358,13 +407,13 @@ mod tests {
         let stmts = expect_block(&body);
         assert_eq!(stmts.len(), 1);
         match &stmts[0] {
-            Tree::Return(expr) => match &**expr {
-                Tree::BinOp(Op::Add, lhs, rhs) => {
-                    assert!(matches!(**lhs, Tree::Integer(1)));
-                    match &**rhs {
-                        Tree::BinOp(Op::Mul, mul_lhs, mul_rhs) => {
-                            assert!(matches!(**mul_lhs, Tree::Integer(2)));
-                            assert!(matches!(**mul_rhs, Tree::Integer(3)));
+            Tree::Return(expr, _) => match expr.as_ref() {
+                Tree::BinOp(Op::Add, lhs, rhs, _) => {
+                    assert!(matches!(lhs.as_ref(), Tree::Integer(1, _)));
+                    match rhs.as_ref() {
+                        Tree::BinOp(Op::Mul, mul_lhs, mul_rhs, _) => {
+                            assert!(matches!(**mul_lhs, Tree::Integer(2, _)));
+                            assert!(matches!(**mul_rhs, Tree::Integer(3, _)));
                         }
                         _ => panic!("expected multiply in rhs"),
                     }
@@ -381,8 +430,8 @@ mod tests {
         let stmts = expect_block(&body);
         match &stmts[0] {
             Tree::If(cond, then_branch, else_branch) => {
-                assert!(matches!(**cond, Tree::Integer(1)));
-                assert!(matches!(**then_branch, Tree::Return(_)));
+                assert!(matches!(**cond, Tree::Integer(1, _)));
+                assert!(matches!(**then_branch, Tree::Return(..)));
                 assert!(else_branch.is_some());
             }
             _ => panic!("expected if stmt"),
@@ -408,7 +457,7 @@ mod tests {
         match &stmts[0] {
             Tree::VarDeclare(ty, name) => {
                 assert_eq!(name, "a");
-                assert_eq!(ty, &Type::Array(Box::new(Type::Int), 10));
+                assert_eq!(*ty, Type::Array(Box::new(Type::Int), 10));
             }
             _ => panic!("expected array declaration"),
         }
@@ -420,10 +469,10 @@ mod tests {
         let stmts = expect_block(&body);
 
         match &stmts[0] {
-            Tree::Return(expr) => match &**expr {
+            Tree::Return(expr, _) => match expr.as_ref() {
                 Tree::Indexed(inner, index) => {
-                    assert!(matches!(**index, Tree::Integer(3)));
-                    assert!(matches!(**inner, Tree::Var(ref name) if name == "a"));
+                    assert!(matches!(index.as_ref(), Tree::Integer(3, _)));
+                    assert!(matches!(inner.as_ref(), Tree::Var(name, _) if name == "a"));
                 }
                 _ => panic!("expected indexed expression"),
             },
@@ -437,15 +486,15 @@ mod tests {
         let stmts = expect_block(&body);
 
         match &stmts[0] {
-            Tree::Assign(lhs, rhs) => {
-                match &**lhs {
+            Tree::Assign(lhs, rhs, _) => {
+                match lhs.as_ref() {
                     Tree::Indexed(inner, index) => {
-                        assert!(matches!(**index, Tree::Integer(1)));
-                        assert!(matches!(**inner, Tree::Var(ref name) if name == "a"));
+                        assert!(matches!(index.as_ref(), Tree::Integer(1, _)));
+                        assert!(matches!(inner.as_ref(), Tree::Var(name, _) if name == "a"));
                     }
                     _ => panic!("expected indexed lvalue"),
                 }
-                assert!(matches!(**rhs, Tree::Integer(2)));
+                assert!(matches!(rhs.as_ref(), Tree::Integer(2, _)));
             }
             _ => panic!("expected assignment statement"),
         }
@@ -456,10 +505,10 @@ mod tests {
         let (_, _, _, body) = parse_func("int main(){ return *&foo(1,2); }");
         let stmts = expect_block(&body);
         match &stmts[0] {
-            Tree::Return(expr) => match &**expr {
-                Tree::Deref(inner) => match &**inner {
-                    Tree::Addr(call) => match &**call {
-                        Tree::Call(name, args) => {
+            Tree::Return(expr, _) => match expr.as_ref() {
+                Tree::Deref(inner, _) => match &**inner {
+                    Tree::Addr(call, _) => match &**call {
+                        Tree::Call(name, args, _) => {
                             assert_eq!(name, "foo");
                             assert_eq!(args.len(), 2);
                         }
@@ -478,12 +527,12 @@ mod tests {
         let (_, _, _, body) = parse_func("int main(){ a=b=1; }");
         let stmts = expect_block(&body);
         match &stmts[0] {
-            Tree::Assign(lhs, rhs) => {
-                assert!(matches!(**lhs, Tree::Var(ref name) if name == "a"));
-                match &**rhs {
-                    Tree::Assign(inner_lhs, inner_rhs) => {
-                        assert!(matches!(**inner_lhs, Tree::Var(ref name) if name == "b"));
-                        assert!(matches!(**inner_rhs, Tree::Integer(1)));
+            Tree::Assign(lhs, rhs, _) => {
+                assert!(matches!(lhs.as_ref(), Tree::Var(name, _) if name == "a"));
+                match rhs.as_ref() {
+                    Tree::Assign(inner_lhs, inner_rhs, _) => {
+                        assert!(matches!(inner_lhs.as_ref(), Tree::Var(name, _) if name == "b"));
+                        assert!(matches!(inner_rhs.as_ref(), Tree::Integer(1, _)));
                     }
                     _ => panic!("expected nested assignment"),
                 }
@@ -497,13 +546,13 @@ mod tests {
         let (_, _, _, body) = parse_func("int main(){ return 1 < 2 == 0; }");
         let stmts = expect_block(&body);
         match &stmts[0] {
-            Tree::Return(expr) => match &**expr {
-                Tree::BinOp(Op::Eq, lhs, rhs) => {
-                    assert!(matches!(**rhs, Tree::Integer(0)));
-                    match &**lhs {
-                        Tree::BinOp(Op::Lt, rel_lhs, rel_rhs) => {
-                            assert!(matches!(**rel_lhs, Tree::Integer(1)));
-                            assert!(matches!(**rel_rhs, Tree::Integer(2)));
+            Tree::Return(expr, _) => match expr.as_ref() {
+                Tree::BinOp(Op::Eq, lhs, rhs, _) => {
+                    assert!(matches!(rhs.as_ref(), Tree::Integer(0, _)));
+                    match lhs.as_ref() {
+                        Tree::BinOp(Op::Lt, rel_lhs, rel_rhs, _) => {
+                            assert!(matches!(rel_lhs.as_ref(), Tree::Integer(1, _)));
+                            assert!(matches!(rel_rhs.as_ref(), Tree::Integer(2, _)));
                         }
                         _ => panic!("expected relational in lhs"),
                     }
@@ -523,7 +572,7 @@ mod tests {
                 assert!(init.is_none());
                 assert!(cond.is_none());
                 assert!(update.is_none());
-                assert!(matches!(**body, Tree::Return(_)));
+                assert!(matches!(body.as_ref(), Tree::Return(..)));
             }
             _ => panic!("expected for stmt"),
         }
@@ -534,10 +583,10 @@ mod tests {
         let (_, _, _, body) = parse_func("int main(){ return sizeof 1 + sizeof x; }");
         let stmts = expect_block(&body);
         match &stmts[0] {
-            Tree::Return(expr) => match &**expr {
-                Tree::BinOp(Op::Add, lhs, rhs) => {
-                    assert!(matches!(**lhs, Tree::Sizeof(_)));
-                    assert!(matches!(**rhs, Tree::Sizeof(_)));
+            Tree::Return(expr, _) => match expr.as_ref() {
+                Tree::BinOp(Op::Add, lhs, rhs, _) => {
+                    assert!(matches!(lhs.as_ref(), Tree::Sizeof(_)));
+                    assert!(matches!(rhs.as_ref(), Tree::Sizeof(_)));
                 }
                 _ => panic!("expected add in return"),
             },
