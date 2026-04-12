@@ -24,7 +24,7 @@ pub type Env = HashMap<String, Type>;
 
 pub struct TypeChecker {
     env: Vec<Env>,
-    functions: HashMap<String, (Type, Vec<Type>)>,
+    functions: HashMap<String, (Type, Vec<Type>, bool)>,
     strings: HashMap<String, String>,
     globals: Env,
     current_return: Option<Type>,
@@ -62,13 +62,24 @@ impl TypeChecker {
 
         self.functions.clear();
         for tree in trees {
-            if let Tree::FuncDef(ty, name, params, _body) = tree {
-                if self.functions.contains_key(name) {
-                    panic!("double declaration of function: {}", name);
+            match tree {
+                Tree::FuncDec(ty, name, params) => {
+                    let param_types = params.iter().map(|(ty, _)| ty.clone()).collect();
+                    self.functions
+                        .insert(name.to_string(), (ty.clone(), param_types, false));
                 }
-                let param_types = params.iter().map(|(ty, _)| ty.clone()).collect();
-                self.functions
-                    .insert(name.to_string(), (ty.clone(), param_types));
+                Tree::FuncDef(ty, name, params, _body) => {
+                    match self.functions.get(name) {
+                        Some((_, _, true)) => panic!("double definition of function: {}", name),
+                        Some(_) => {}
+                        None => {}
+                    }
+
+                    let param_types = params.iter().map(|(ty, _)| ty.clone()).collect();
+                    self.functions
+                        .insert(name.to_string(), (ty.clone(), param_types, true));
+                }
+                _ => {}
             }
         }
     }
@@ -112,6 +123,7 @@ impl TypeChecker {
                 trees
                     .iter()
                     .filter_map(|tree| match tree {
+                        Tree::FuncDec(_, _, _) => None,
                         Tree::FuncDef(ty, name, params, body) => {
                             let prev_return = self.current_return.take();
                             self.current_return = Some(ty.clone());
@@ -276,7 +288,7 @@ impl TypeChecker {
                 }
             }
             Tree::Call(name, args, _) => {
-                let (ret_ty, params) = self
+                let (ret_ty, params, _defined) = self
                     .functions
                     .get(name)
                     .unwrap_or_else(|| panic!("{} is not declared", name))

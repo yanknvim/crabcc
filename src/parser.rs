@@ -123,6 +123,7 @@ pub enum Tree<P: Phase> {
     Assign(Box<Tree<P>>, Box<Tree<P>>, P::XAssign),
     Block(Vec<Tree<P>>),
     FuncDef(Type, String, Vec<(Type, String)>, Box<Tree<P>>),
+    FuncDec(Type, String, Vec<(Type, String)>),
     If(Box<Tree<P>>, Box<Tree<P>>, Option<Box<Tree<P>>>),
     While(Box<Tree<P>>, Box<Tree<P>>),
     For(
@@ -238,12 +239,9 @@ where
                     .then(unary.clone())
                     .map(|(op, expr)| match op {
                         UnaryOp::Plus => expr,
-                        UnaryOp::Minus => Tree::BinOp(
-                            Op::Sub,
-                            Box::new(Tree::Integer(0, ())),
-                            Box::new(expr),
-                            (),
-                        ),
+                        UnaryOp::Minus => {
+                            Tree::BinOp(Op::Sub, Box::new(Tree::Integer(0, ())), Box::new(expr), ())
+                        }
                         UnaryOp::Addr => Tree::Addr(Box::new(expr), ()),
                         UnaryOp::Deref => Tree::Deref(Box::new(expr), ()),
                     })
@@ -386,7 +384,7 @@ where
         .then(ident_name)
         .then(
             just(Token::LParen)
-                .ignore_then(param_list.or_not())
+                .ignore_then(param_list.clone().or_not())
                 .then_ignore(just(Token::RParen)),
         )
         .then(
@@ -400,10 +398,21 @@ where
                 .map(Tree::Block),
         )
         .map(|(((ty, name), params), body)| {
-            Tree::FuncDef(ty, name, params.unwrap(), Box::new(body))
+            Tree::FuncDef(ty, name, params.unwrap_or_default(), Box::new(body))
         });
 
-    choice((func_def, var_decl, stmt_parser))
+    let func_dec = type_parser
+        .clone()
+        .then(ident_name)
+        .then(
+            just(Token::LParen)
+                .ignore_then(param_list.or_not())
+                .then_ignore(just(Token::RParen)),
+        )
+        .then_ignore(just(Token::Semicolon))
+        .map(|((ty, name), params)| Tree::FuncDec(ty, name, params.unwrap_or_default()));
+
+    choice((func_def, func_dec, var_decl, stmt_parser))
         .repeated()
         .collect::<Vec<_>>()
         .then_ignore(end())

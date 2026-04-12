@@ -8,7 +8,6 @@ use logos::Logos;
 pub enum Token<'a> {
     #[regex(r"//.*\n?", logos::skip, allow_greedy = true)]
     #[regex(r"/\*(?:[^*]|\*[^/])*\*/", logos::skip, allow_greedy = true)]
-
     #[token("int")]
     Int,
     #[token("char")]

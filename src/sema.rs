@@ -48,5 +48,6 @@ pub fn lower(tree: Tree<Typed>) -> Tree<Lowered> {
         Tree::Sizeof(expr) => Tree::Sizeof(Box::new(lower(*expr))),
         Tree::Call(name, args, ty) => Tree::Call(name, args.into_iter().map(lower).collect(), ty),
         Tree::Return(expr, ty) => Tree::Return(Box::new(lower(*expr)), ty),
+        _ => panic!("unexpected tree in lowering phase"),
     }
 }
